@@ -20,7 +20,7 @@ from .external_apis import translate_text
     "astrbot_plugin_tts_llm",
     "clown145",
     "一个通过LLM、翻译和TTS实现语音合成的插件",
-    "1.3.6",
+    "1.3.7",
     "https://github.com/clown145/astrbot_plugin_tts_llm",
 )
 class LlmTtsPlugin(Star):
@@ -30,6 +30,7 @@ class LlmTtsPlugin(Star):
         self.active_sessions: Set[str] = set()
         self.w_active_sessions: Set[str] = set()
         self.active_groups: Set[str] = set()  # 新增：群组级TTS开关
+        self.inactive_groups: Set[str] = set()
         self.session_emotions: Dict[str, Dict[str, str]] = {}
         self.session_w_settings: Dict[str, Dict[str, str]] = {}
         self._keepalive_stop_event = asyncio.Event()
@@ -49,18 +50,38 @@ class LlmTtsPlugin(Star):
         # 初始化白名单群组（自动开启 TTS）
         whitelist = self.config.get("group_whitelist", [])
         for group_id in whitelist:
-            if group_id:
-                self.active_groups.add(str(group_id))
-                logger.info(f"白名单群组 [{group_id}] 已自动开启语音合成。")
+            normalized_group_id = self._normalize_group_id(group_id)
+            if normalized_group_id:
+                self.active_groups.add(normalized_group_id)
+                logger.info(f"白名单群组 [{normalized_group_id}] 已自动开启语音合成。")
+
+        if self.config.get("enable_group_tts_by_default", False):
+            logger.info("已开启全部群默认语音合成；群组黑名单仍优先。")
 
         logger.info("LLM TTS 插件已加载。")
 
-    def _is_group_blacklisted(self, group_id: str) -> bool:
+    def _normalize_group_id(self, group_id: Optional[object]) -> str:
+        """统一群号格式，避免配置里的字符串和事件里的数字不匹配。"""
+        return str(group_id) if group_id else ""
+
+    def _is_group_blacklisted(self, group_id: Optional[object]) -> bool:
         """检查群组是否在黑名单中"""
+        group_id = self._normalize_group_id(group_id)
         if not group_id:
             return False
         blacklist = self.config.get("group_blacklist", [])
         return str(group_id) in [str(g) for g in blacklist]
+
+    def _is_group_tts_active(self, group_id: Optional[object]) -> bool:
+        """检查群组级 TTS 是否开启。黑名单 > 运行时关闭 > 默认全开/白名单/手动开启。"""
+        group_id = self._normalize_group_id(group_id)
+        if not group_id or self._is_group_blacklisted(group_id):
+            return False
+        if group_id in self.inactive_groups:
+            return False
+        return bool(self.config.get("enable_group_tts_by_default", False)) or (
+            group_id in self.active_groups
+        )
 
     def _get_keepalive_urls(self) -> list[str]:
         """获取所有需要保活的目标地址。包括配置的TTS服务器和额外的保活地址。"""
@@ -221,7 +242,7 @@ class LlmTtsPlugin(Star):
 
     @filter.command("tts-llm", alias={"开启语音合成"})
     async def start_tts(self, event: AstrMessageEvent):
-        group_id = event.message_obj.group_id
+        group_id = self._normalize_group_id(event.message_obj.group_id)
         if self._is_group_blacklisted(group_id):
             yield event.plain_result("❌ 本群组已被禁用语音合成功能。")
             return
@@ -247,7 +268,7 @@ class LlmTtsPlugin(Star):
     @filter.command("ttg", alias={"开启群语音"})
     async def start_group_tts(self, event: AstrMessageEvent):
         """开启当前群组的语音合成 (对所有人生效)"""
-        group_id = event.message_obj.group_id
+        group_id = self._normalize_group_id(event.message_obj.group_id)
         if not group_id:
             yield event.plain_result("❌ 此指令仅限群聊使用。")
             return
@@ -256,6 +277,7 @@ class LlmTtsPlugin(Star):
             yield event.plain_result("❌ 本群组已被禁用语音合成功能。")
             return
 
+        self.inactive_groups.discard(group_id)
         self.active_groups.add(group_id)
         default_char = self.config.get("default_character")
         default_emotion = self.config.get("default_emotion_name")
@@ -277,18 +299,21 @@ class LlmTtsPlugin(Star):
     @filter.command("ttg-q", alias={"关闭群语音"})
     async def stop_group_tts(self, event: AstrMessageEvent):
         """关闭当前群组的语音合成"""
-        group_id = event.message_obj.group_id
+        group_id = self._normalize_group_id(event.message_obj.group_id)
         if not group_id:
             yield event.plain_result("❌ 此指令仅限群聊使用。")
             return
 
-        self.active_groups.discard(group_id)
+        if self.config.get("enable_group_tts_by_default", False):
+            self.inactive_groups.add(group_id)
+        else:
+            self.active_groups.discard(group_id)
         logger.info(f"群组 [{group_id}] 的 LLM TTS 功能已关闭。")
         yield event.plain_result("⏹️ 本群组的LLM语音合成已关闭。")
 
     @filter.command("tts-w", alias={"开启自动情感识别"})
     async def start_tts_w(self, event: AstrMessageEvent):
-        group_id = event.message_obj.group_id
+        group_id = self._normalize_group_id(event.message_obj.group_id)
         if self._is_group_blacklisted(group_id):
             yield event.plain_result("❌ 本群组已被禁用语音合成功能。")
             return
@@ -380,17 +405,18 @@ class LlmTtsPlugin(Star):
     async def inject_llm_prompt(self, event: AstrMessageEvent, req: ProviderRequest):
         """在LLM请求前注入提示词"""
         session_id = event.unified_msg_origin
-        group_id = event.message_obj.group_id
+        group_id = self._normalize_group_id(event.message_obj.group_id)
 
         # 黑名单群组不进行任何处理
         if self._is_group_blacklisted(group_id):
             return
 
         # 只有在开启了TTS模式（自动或固定，或群组模式）时才注入
+        is_group_tts_active = self._is_group_tts_active(group_id)
         is_active = (
             session_id in self.active_sessions
             or session_id in self.w_active_sessions
-            or (group_id and group_id in self.active_groups)
+            or is_group_tts_active
         )
 
         if not is_active:
@@ -412,9 +438,7 @@ class LlmTtsPlugin(Star):
                 char_name = self.session_w_settings.get(session_id, {}).get(
                     "character"
                 ) or self.config.get("default_character")
-            elif session_id in self.active_sessions or (
-                group_id and group_id in self.active_groups
-            ):
+            elif session_id in self.active_sessions or is_group_tts_active:
                 # 固定模式或群组模式下
                 session_setting = self.session_emotions.get(session_id)
                 char_name = (
@@ -451,7 +475,7 @@ class LlmTtsPlugin(Star):
         self, event: AstrMessageEvent, resp: LLMResponse
     ):
         session_id = event.unified_msg_origin
-        group_id = event.message_obj.group_id
+        group_id = self._normalize_group_id(event.message_obj.group_id)
         original_text = resp.completion_text.strip()
         if not original_text:
             return
@@ -466,10 +490,11 @@ class LlmTtsPlugin(Star):
         original_text = original_text.replace("(TTS失败: 角色", "")  # 模糊匹配
 
         # 检查是否开启了TTS (个人会话 或 群组)
+        is_group_tts_active = self._is_group_tts_active(group_id)
         is_active = (
             session_id in self.active_sessions
             or session_id in self.w_active_sessions
-            or (group_id and group_id in self.active_groups)
+            or is_group_tts_active
         )
 
         if not is_active:
