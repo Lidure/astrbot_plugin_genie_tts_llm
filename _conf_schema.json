@@ -225,6 +225,20 @@
         "type": "text",
         "default": "# 翻译\n你必须在回复末尾用 $...$ 符号包裹对应的日语翻译。\n例：今天天气不错 $今日はいい天気ですね$"
       },
+      "enable_llm_tts_tool_prompt": {
+        "title": "注入语音工具提示",
+        "description": "引导按需调用工具",
+        "hint": "开启后会额外注入一段提示词，告诉主 LLM 仅在用户明确要求试听、发语音、念一句时才调用 genie_tts_speak 工具。",
+        "type": "bool",
+        "default": true
+      },
+      "llm_tts_tool_prompt": {
+        "title": "语音工具提示词",
+        "description": "工具调用 Prompt",
+        "hint": "用于约束主 LLM 何时调用 genie_tts_speak。建议强调“仅在用户明确要求时调用”，避免日常闲聊滥用工具。",
+        "type": "text",
+        "default": "# 语音工具\n当且仅当用户明确要求你直接发一条语音、说一句给他听、念一段内容、试听声音时，你可以调用 genie_tts_speak 工具。\n普通闲聊时不要调用这个工具，也不要因为用户只是提到声音、角色、语音功能就主动调用。\n调用时请传入适合直接朗读的简短文本；如果你不确定角色或情感，就把 character_name 和 emotion_name 留空，让插件沿用当前会话或默认设置。"
+      },
       "use_astrbot_provider": {
         "title": "使用 AstrBot Provider",
         "description": "框架内翻译",

@@ -1,5 +1,16 @@
 # 更新日志
 
+## v1.5.1
+
+- **[新增] 可配置语音工具提示注入**：新增 `enable_llm_tts_tool_prompt` 与 `llm_tts_tool_prompt`，可引导主 LLM 仅在用户明确要求时调用 `genie_tts_speak`。
+- **[优化] 注入日志**：日志中会额外记录本轮是否注入了语音工具提示。
+
+## v1.5.0
+
+- **[新增] LLM 主动语音工具**：新增 `genie_tts_speak` 工具，允许 LLM 在用户明确要求时主动合成并发送语音。
+- **[优化] 自动语音与工具协同**：当 LLM 工具已主动发送语音时，插件会自动跳过本轮普通自动 TTS，避免重复发声。
+- **[整理] README 更新日志**：README 中不再内嵌大段历史更新，统一跳转到 `CHANGELOG.md` 查看。
+
 ## v1.4.0
 
 - **[调整] Fork 标识**：插件 ID、元数据、数据目录和文档已改为 `astrbot_plugin_genie_tts_llm`。
