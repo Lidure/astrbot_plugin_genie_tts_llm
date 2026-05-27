@@ -1,5 +1,12 @@
 # 更新日志
 
+## v1.6.0
+
+- **[新增] 自动TTS输出模式**：新增 `auto_tts_output_mode`，支持 `audio_only`、`audio_and_text`、`split_audio_text` 三种自动回复发送模式。
+- **[新增] LLM工具输出模式**：新增 `llm_tool_tts_output_mode`，单独控制 `genie_tts_speak` 的输出方式，默认保持纯语音。
+- **[修复] 语音吞字显示问题**：自动 TTS 与 LLM 工具的“语音+文字”改为分开发送，避免被 splitter 拆成“前半句进语音、后半句留文字”的错位效果。
+- **[兼容] 旧配置迁移**：保留 `send_text_with_audio` 兼容旧版本配置，升级后会自动映射到新的自动TTS输出模式。
+
 ## v1.5.1
 
 - **[新增] 可配置语音工具提示注入**：新增 `enable_llm_tts_tool_prompt` 与 `llm_tts_tool_prompt`，可引导主 LLM 仅在用户明确要求时调用 `genie_tts_speak`。

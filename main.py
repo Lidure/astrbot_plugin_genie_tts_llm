@@ -4,7 +4,7 @@ import os
 import random
 import re
 import time
-from typing import Dict, Optional, Set
+from typing import Dict, Optional, Set, Tuple
 
 from astrbot.api.event import filter, AstrMessageEvent, MessageChain
 from astrbot.api.star import Context, Star, register, StarTools
@@ -22,7 +22,7 @@ from .external_apis import translate_text
     "astrbot_plugin_genie_tts_llm",
     "Whereis-Alice",
     "一个通过 LLM、翻译和 Genie TTS 实现语音合成的插件，支持主动语音工具",
-    "1.5.1",
+    "1.6.0",
     "https://github.com/Whereis-Alice/astrbot_plugin_genie_tts_llm",
 )
 class GenieTtsLlmPlugin(Star):
@@ -149,6 +149,176 @@ class GenieTtsLlmPlugin(Star):
             f"[{session_id}] TTS翻译结果 | 原文: {self._preview_log_text(source_text)} | "
             f"合成文本: {self._preview_log_text(target_text)}"
         )
+
+    def _normalize_tts_output_mode(
+        self, mode: Optional[object], default: str
+    ) -> str:
+        normalized = str(mode or "").strip().lower()
+        mode_aliases = {
+            "audio_only": "audio_only",
+            "voice_only": "audio_only",
+            "only_audio": "audio_only",
+            "only_voice": "audio_only",
+            "纯语音": "audio_only",
+            "只发语音": "audio_only",
+            "只发语音不发文字": "audio_only",
+            "audio_and_text": "audio_and_text",
+            "voice_and_text": "audio_and_text",
+            "text_with_audio": "audio_and_text",
+            "both": "audio_and_text",
+            "full_text": "audio_and_text",
+            "语音加文字": "audio_and_text",
+            "语音跟原文都有": "audio_and_text",
+            "原文和语音": "audio_and_text",
+            "split_audio_text": "split_audio_text",
+            "mixed": "split_audio_text",
+            "hybrid": "split_audio_text",
+            "partial_text": "split_audio_text",
+            "一半文字一半语音": "split_audio_text",
+            "半文字半语音": "split_audio_text",
+        }
+        return mode_aliases.get(normalized, default)
+
+    def _get_auto_tts_output_mode(self) -> str:
+        configured_mode = self.config.get("auto_tts_output_mode")
+        if configured_mode in (None, ""):
+            legacy_value = self.config.get("send_text_with_audio")
+            if legacy_value is not None:
+                return "audio_and_text" if legacy_value else "audio_only"
+        return self._normalize_tts_output_mode(
+            configured_mode, default="audio_and_text"
+        )
+
+    def _get_llm_tool_tts_output_mode(self) -> str:
+        configured_mode = self.config.get("llm_tool_tts_output_mode", "audio_only")
+        return self._normalize_tts_output_mode(
+            configured_mode, default="audio_only"
+        )
+
+    def _split_text_for_mixed_output(self, text: str) -> Tuple[str, str]:
+        compact_text = re.sub(r"\s+", " ", (text or "")).strip()
+        if not compact_text:
+            return "", ""
+
+        regex_pattern = self.config.get(
+            "sentence_split_regex", r"([。、，！？,.!?])"
+        )
+        try:
+            parts = re.split(regex_pattern, compact_text)
+        except re.error:
+            parts = re.split(r"([。！？!?；;，,、])", compact_text)
+
+        sentences = []
+        for index in range(0, len(parts) - 1, 2):
+            sentence = parts[index]
+            delimiter = parts[index + 1] if index + 1 < len(parts) else ""
+            merged = f"{sentence}{delimiter}".strip()
+            if merged:
+                sentences.append(merged)
+        if len(parts) % 2 == 1 and parts[-1].strip():
+            sentences.append(parts[-1].strip())
+
+        if len(sentences) >= 2:
+            split_index = max(1, len(sentences) // 2)
+            audio_text = "".join(sentences[:split_index]).strip()
+            plain_text = "".join(sentences[split_index:]).strip()
+            return audio_text, plain_text
+
+        pivot = max(1, len(compact_text) // 2)
+        split_index = -1
+        for match in re.finditer(r"[。！？!?；;，,、]", compact_text):
+            candidate = match.end()
+            if candidate >= pivot:
+                split_index = candidate
+                break
+
+        if split_index <= 0:
+            split_index = compact_text.rfind(" ", 0, pivot)
+        if split_index <= 0 or split_index >= len(compact_text):
+            return compact_text, ""
+
+        audio_text = compact_text[:split_index].strip()
+        plain_text = compact_text[split_index:].strip()
+        return audio_text, plain_text
+
+    async def _send_audio_message(self, session_id: str, audio_path: str) -> bool:
+        return await self.context.send_message(
+            session_id, MessageChain(chain=[Comp.Record(file=audio_path)])
+        )
+
+    async def _send_text_message(self, session_id: str, text: str) -> bool:
+        return await self.context.send_message(
+            session_id, MessageChain(chain=[Comp.Plain(text)])
+        )
+
+    def _prepare_tts_output_segments(
+        self, display_text: str, output_mode: str
+    ) -> Tuple[str, str, str]:
+        resolved_mode = self._normalize_tts_output_mode(
+            output_mode, default="audio_and_text"
+        )
+
+        if resolved_mode == "audio_only":
+            return display_text, "", resolved_mode
+
+        if resolved_mode == "split_audio_text":
+            audio_text, plain_text = self._split_text_for_mixed_output(display_text)
+            if audio_text and plain_text:
+                return audio_text, plain_text, resolved_mode
+            logger.info("Mixed TTS output could not split text cleanly, fallback to audio_and_text.")
+            resolved_mode = "audio_and_text"
+
+        return display_text, display_text, resolved_mode
+
+    async def _apply_auto_tts_output_mode(
+        self,
+        session_id: str,
+        resp: LLMResponse,
+        audio_path: str,
+        full_display_text: str,
+        plain_display_text: str,
+        output_mode: str,
+    ) -> None:
+        if output_mode == "audio_only":
+            resp.result_chain.chain = [Comp.Record(file=audio_path)]
+            return
+
+        audio_sent = await self._send_audio_message(session_id, audio_path)
+        if audio_sent:
+            resp.completion_text = plain_display_text
+            resp.result_chain.chain = [Comp.Plain(plain_display_text)]
+            return
+
+        resp.completion_text = full_display_text
+        resp.result_chain.chain = [
+            Comp.Plain(full_display_text),
+            Comp.Plain("\n(TTS音频发送失败)"),
+        ]
+
+    async def _dispatch_llm_tool_tts_output(
+        self,
+        session_id: str,
+        audio_path: str,
+        full_display_text: str,
+        plain_display_text: str,
+        output_mode: str,
+    ) -> Tuple[bool, Optional[str]]:
+        if output_mode == "audio_only":
+            ok = await self._send_audio_message(session_id, audio_path)
+            if ok:
+                return True, None
+            return False, "语音已经合成成功，但 AstrBot 主动发送语音失败了。"
+
+        ok = await self._send_audio_message(session_id, audio_path)
+        if not ok:
+            return False, "语音已经合成成功，但 AstrBot 主动发送语音失败了。"
+
+        if plain_display_text:
+            text_ok = await self._send_text_message(session_id, plain_display_text)
+            if not text_ok:
+                return False, "语音已经发出，但补发文字失败了。"
+
+        return True, None
 
     def _get_keepalive_urls(self) -> list[str]:
         """获取所有需要保活的目标地址。包括配置的TTS服务器和额外的保活地址。"""
@@ -485,23 +655,46 @@ class GenieTtsLlmPlugin(Star):
         if not target_text:
             return "语音发送失败：用于 TTS 的文本准备失败了，请检查翻译配置或日志。"
 
+        output_mode = self._get_llm_tool_tts_output_mode()
+        tts_text, plain_text, output_mode = self._prepare_tts_output_segments(
+            text, output_mode
+        )
+        if not tts_text:
+            return "语音发送失败：没有可用于朗读的文本。"
+
+        tts_target_text = target_text
+        if output_mode == "split_audio_text":
+            if self.config.get("enable_translation", True):
+                tts_target_text = await self._translate_text_with_backends(tts_text)
+                self._log_translation_result(session_id, tts_text, tts_target_text)
+            else:
+                tts_target_text = tts_text
+
+            if not tts_target_text:
+                return "语音发送失败：混合模式下用于 TTS 的文本准备失败了，请检查翻译配置或日志。"
+
         audio_path = await self.tts_engine.synthesize(
             character_name=char_name,
             ref_audio_path=emotion_data["ref_audio_path"],
             ref_audio_text=emotion_data["ref_audio_text"],
-            text=target_text,
+            text=tts_target_text,
             session_id_for_log=session_id,
             language=emotion_data.get("language"),
         )
         if not audio_path:
             return "语音发送失败：TTS 合成没有成功，请检查服务状态或日志。"
 
-        direct_chain = MessageChain(chain=[Comp.Record(file=audio_path)])
-        ok = await self.context.send_message(session_id, direct_chain)
+        ok, error_message = await self._dispatch_llm_tool_tts_output(
+            session_id=session_id,
+            audio_path=audio_path,
+            full_display_text=text,
+            plain_display_text=plain_text,
+            output_mode=output_mode,
+        )
         if not ok:
             return (
-                "语音已经合成成功，但 AstrBot 主动发送失败了。"
-                "请确认当前会话对应的平台实例仍然在线。"
+                (error_message or "语音已经合成成功，但 AstrBot 主动发送失败了。")
+                + "请确认当前会话对应的平台实例仍然在线。"
             )
 
         self.skip_next_auto_tts_sessions.add(session_id)
@@ -867,6 +1060,31 @@ class GenieTtsLlmPlugin(Star):
             resp.result_chain.chain.append(Comp.Plain("\n(TTS失败: 翻译无结果)"))
             return
 
+        display_text = original_text
+        output_mode = self._get_auto_tts_output_mode()
+        tts_source_text, plain_display_text, output_mode = self._prepare_tts_output_segments(
+            display_text, output_mode
+        )
+        if not tts_source_text:
+            resp.result_chain.chain.append(Comp.Plain("\n(TTS失败: 没有可用于朗读的文本)"))
+            return
+
+        if output_mode == "split_audio_text":
+            if enable_llm_translation and injected_translation:
+                translated_audio_text, _, _ = self._prepare_tts_output_segments(
+                    injected_translation, output_mode
+                )
+                target_text = translated_audio_text or target_text
+            elif self.config.get("enable_translation", True):
+                target_text = await self._translate_text_with_backends(tts_source_text)
+                self._log_translation_result(session_id, tts_source_text, target_text)
+            else:
+                target_text = tts_source_text
+
+            if not target_text:
+                resp.result_chain.chain.append(Comp.Plain("\n(TTS失败: 混合模式翻译无结果)"))
+                return
+
         # 最终合成
         # 如果此时还没有 target_emotion (比如固定模式没注入，或者自动模式失败)，使用默认
         if not target_emotion:
@@ -896,13 +1114,14 @@ class GenieTtsLlmPlugin(Star):
         )
 
         if audio_path:
-            # 根据配置决定是否发送原文
-            if self.config.get("send_text_with_audio", True):
-                # 语音和文字一起发送
-                resp.result_chain.chain.insert(0, Comp.Record(file=audio_path))
-            else:
-                # 只发送语音，清空原有的文字消息
-                resp.result_chain.chain = [Comp.Record(file=audio_path)]
+            await self._apply_auto_tts_output_mode(
+                session_id=session_id,
+                resp=resp,
+                audio_path=audio_path,
+                full_display_text=display_text,
+                plain_display_text=plain_display_text,
+                output_mode=output_mode,
+            )
         else:
             resp.result_chain.chain.append(Comp.Plain("\n(TTS合成失败)"))
 
