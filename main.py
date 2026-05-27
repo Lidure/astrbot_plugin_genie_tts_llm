@@ -1,7 +1,9 @@
 import asyncio
 import httpx
 import os
+import random
 import re
+import time
 from typing import Dict, Optional, Set
 
 from astrbot.api.event import filter, AstrMessageEvent
@@ -17,13 +19,13 @@ from .external_apis import translate_text
 
 
 @register(
-    "astrbot_plugin_tts_llm",
-    "clown145",
-    "一个通过LLM、翻译和TTS实现语音合成的插件",
-    "1.3.7",
-    "https://github.com/clown145/astrbot_plugin_tts_llm",
+    "astrbot_plugin_genie_tts_llm",
+    "Whereis-Alice",
+    "一个通过 LLM、翻译和 Genie TTS 实现语音合成的插件",
+    "1.4.0",
+    "https://github.com/Whereis-Alice/astrbot_plugin_genie_tts_llm",
 )
-class LlmTtsPlugin(Star):
+class GenieTtsLlmPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
@@ -33,11 +35,12 @@ class LlmTtsPlugin(Star):
         self.inactive_groups: Set[str] = set()
         self.session_emotions: Dict[str, Dict[str, str]] = {}
         self.session_w_settings: Dict[str, Dict[str, str]] = {}
+        self.last_tts_trigger_at: Dict[str, float] = {}
         self._keepalive_stop_event = asyncio.Event()
         self._keepalive_task: Optional[asyncio.Task] = None
 
         # 初始化辅助模块
-        plugin_data_dir = StarTools.get_data_dir("astrbot_plugin_tts_llm")
+        plugin_data_dir = StarTools.get_data_dir("astrbot_plugin_genie_tts_llm")
         emotions_file_path = plugin_data_dir / "emotions.json"
         self.emotion_manager = EmotionManager(emotions_file_path)
 
@@ -81,6 +84,69 @@ class LlmTtsPlugin(Star):
             return False
         return bool(self.config.get("enable_group_tts_by_default", False)) or (
             group_id in self.active_groups
+        )
+
+    def _should_generate_tts_now(self, session_id: str) -> bool:
+        """按配置判断本次 LLM 回复是否需要生成语音。"""
+        mode = str(self.config.get("tts_trigger_mode", "always")).strip().lower()
+
+        if mode in {"always", "一直触发"}:
+            return True
+
+        if mode in {"interval", "time", "按间隔"}:
+            try:
+                interval_seconds = max(
+                    int(self.config.get("tts_trigger_interval_seconds", 300) or 0), 0
+                )
+            except (TypeError, ValueError):
+                interval_seconds = 300
+            if interval_seconds <= 0:
+                return True
+
+            now = time.monotonic()
+            last_trigger_at = self.last_tts_trigger_at.get(session_id)
+            if last_trigger_at is None or now - last_trigger_at >= interval_seconds:
+                self.last_tts_trigger_at[session_id] = now
+                return True
+
+            remaining = interval_seconds - (now - last_trigger_at)
+            logger.info(
+                f"[{session_id}] 已按时间间隔跳过本次 TTS，约 {remaining:.1f} 秒后可再次触发。"
+            )
+            return False
+
+        if mode in {"random", "probability", "随机概率"}:
+            try:
+                probability = float(self.config.get("tts_trigger_probability", 30) or 0)
+            except (TypeError, ValueError):
+                probability = 30.0
+            probability = min(max(probability, 0.0), 100.0)
+            triggered = random.random() * 100 < probability
+            if not triggered:
+                logger.info(
+                    f"[{session_id}] 已按随机概率跳过本次 TTS（当前概率: {probability:g}%）。"
+                )
+            return triggered
+
+        logger.warning(f"未知 TTS 触发模式: {mode}，已按 always 处理。")
+        return True
+
+    def _preview_log_text(self, text: Optional[str], max_length: int = 180) -> str:
+        if not text:
+            return ""
+        compact = re.sub(r"\s+", " ", text).strip()
+        if len(compact) <= max_length:
+            return compact
+        return f"{compact[:max_length]}..."
+
+    def _log_translation_result(
+        self, session_id: str, source_text: str, target_text: Optional[str]
+    ) -> None:
+        if not self.config.get("enable_translation_debug_log", False):
+            return
+        logger.info(
+            f"[{session_id}] TTS翻译结果 | 原文: {self._preview_log_text(source_text)} | "
+            f"合成文本: {self._preview_log_text(target_text)}"
         )
 
     def _get_keepalive_urls(self) -> list[str]:
@@ -533,6 +599,9 @@ class LlmTtsPlugin(Star):
         # 简单起见，我们重建 chain
         resp.result_chain.chain = [Comp.Plain(resp.completion_text)]
 
+        if not self._should_generate_tts_now(session_id):
+            return
+
         # --- 开始 TTS 处理流程 ---
 
         audio_path: Optional[str] = None
@@ -636,6 +705,8 @@ class LlmTtsPlugin(Star):
                     target_text = await translate_text(
                         original_text, self.http_client, api_config
                     )
+
+        self._log_translation_result(session_id, original_text, target_text)
 
         if not target_text:
             resp.result_chain.chain.append(Comp.Plain("\n(TTS失败: 翻译无结果)"))

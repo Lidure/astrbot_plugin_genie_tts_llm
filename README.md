@@ -1,14 +1,16 @@
 
 <div align="center">
 
-# astrbot_plugin_tts_llm
+# astrbot_plugin_genie_tts_llm
 
 _✨ AstrBot LLM 回复语音合成插件 ✨_  
+
+本 fork 基于 [clown145/astrbot_plugin_tts_llm](https://github.com/clown145/astrbot_plugin_tts_llm) 调整。
 
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://www.python.org/)
 [![AstrBot](https://img.shields.io/badge/AstrBot-v3.4%2B-orange.svg)](https://github.com/AstrBotDevs/AstrBot)
-[![GitHub](https://img.shields.io/badge/作者-clown145-blue)](https://github.com/clown145)
+[![GitHub](https://img.shields.io/badge/Fork-Whereis--Alice-blue)](https://github.com/Whereis-Alice)
 
 </div>
 
@@ -24,11 +26,20 @@ _✨ AstrBot LLM 回复语音合成插件 ✨_
 - **高度可配置**：支持自定义翻译API (OpenAI/Gemini)、TTS服务器地址和默认角色。
 - **手动合成**：提供指令，可绕过 LLM 直接将指定文本合成为语音，方便测试。
 - **故障转移**：支持配置多个TTS服务器，一个失效时自动尝试下一个。
+- **可配置触发频率**：支持每次触发、按时间间隔触发、按随机概率触发，降低聊天时的语音打扰。
+- **翻译调试日志**：可选择将原文和最终合成文本写入 AstrBot 日志，方便排查翻译链路。
 - **注意**：该服务默认合成日语，但支持通过配置或注册指令合成其他语言（需模型支持）。
 
 ---
 
 ## ⬆️ 更新日志
+
+### v1.4.0
+
+- **【调整】Fork 标识**：插件 ID、元数据、数据目录和安装说明已改为 `astrbot_plugin_genie_tts_llm`。
+- **【优化】配置页面**：将长说明拆为短描述与悬浮提示，减少 WebUI 中描述被挤压截断。
+- **【新增】语音触发频率**：支持 `always`、`interval`、`random` 三种触发模式。
+- **【新增】翻译调试日志**：可将原文和最终合成文本输出到 AstrBot 日志。
 
 ### v1.3.7
 
@@ -75,7 +86,7 @@ _✨ AstrBot LLM 回复语音合成插件 ✨_
     -   点击页面右上角的 **"Duplicate this Space"** 即可一键复制，拥有一个完全属于您自己的、免费的TTS服务。
 
 2.  **使用自定义模型**:
-    -   默认服务会从我的模型仓库 [clown145/my-genie-tts-models](https://huggingface.co/clown145/my-genie-tts-models/tree/main) 下载模型。该模型仓库已包含多个预置角色，例如： `kisaki` (月社妃), `hiy` (和泉妃爱), `may` (椎名真由理), `aoi` (葵) 等，您可以直接使用。现在默认注册三个角色是kisaki,aoi,oka。您可以去app.py按照说明修改。
+    -   默认服务会从示例模型仓库 [clown145/my-genie-tts-models](https://huggingface.co/clown145/my-genie-tts-models/tree/main) 下载模型。该模型仓库已包含多个预置角色，例如： `kisaki` (月社妃), `hiy` (和泉妃爱), `may` (椎名真由理), `aoi` (葵) 等，您可以直接使用。现在默认注册三个角色是kisaki,aoi,oka。您可以去app.py按照说明修改。
     -   若要使用您自己的模型，请将您训练和转换好的模型上传到您自己的 Hugging Face 模型仓库，然后在 Space 的 `app.py` 文件中修改 `REPO_ID` 和 `CHARACTERS` 字典。
     -   **【关键步骤】** 在您的空间中，**您必须创建一个名为 `reference_audio` 的文件夹**，并将所有用于注册情感的参考音频文件（如 `.wav`, `.ogg`）放入其中。
     -   **注意：** Genie 服务目前有加载3个模型的上限，请确保 `CHARACTERS` 字典中启用的角色不超过3个。
@@ -95,7 +106,7 @@ _✨ AstrBot LLM 回复语音合成插件 ✨_
 
 ## 📦 插件安装
 
-- **方式一 (推荐)**: 在 AstrBot 的插件市场搜索 `astrbot_plugin_tts_llm`，点击安装，等待完成即可。
+- **方式一 (推荐)**: 在 AstrBot 的插件市场搜索 `astrbot_plugin_genie_tts_llm`，点击安装，等待完成即可。
 
 - **方式二 (手动)**: 若安装失败，可尝试克隆源码。
   ```bash
@@ -103,7 +114,7 @@ _✨ AstrBot LLM 回复语音合成插件 ✨_
   cd /path/to/your/AstrBot/data/plugins
 
   # 克隆仓库
-  git clone https://github.com/clown145/astrbot_plugin_tts_llm.git
+  git clone https://github.com/Whereis-Alice/astrbot_plugin_genie_tts_llm.git
 
   # 重启 AstrBot
   ```
@@ -122,6 +133,10 @@ _✨ AstrBot LLM 回复语音合成插件 ✨_
 | **群组黑名单** | 彻底禁用语音合成功能和指令的群号列表。 | `["654321"]` |
 | **TTS 服务器地址列表** | **【核心】** 填入您部署好的Genie TTS服务URL。可点击"+"添加多个。 | `https://your-name.hf.space` |
 | **是否附带原文** | 发送语音时，是否同时发送 LLM 生成的原始文本。 | `true` / `false` |
+| **语音触发模式** | 控制 LLM 回复是否生成语音：每次、按间隔、按概率。 | `always` / `interval` / `random` |
+| **触发间隔秒数** | `interval` 模式下，同一会话多久最多触发一次。 | `300` |
+| **随机触发概率** | `random` 模式下，每次回复生成语音的概率。 | `30` |
+| **记录翻译结果** | 将原文和最终合成文本写入 AstrBot 日志。 | `false` |
 | **默认角色名** | 自动语音模式下使用的默认角色。**必须是已注册过的。** | `kisaki` |
 | **默认情感名** | **固定情感模式**下使用的默认情感。 | `开心` |
 | **TTS默认语言** | 默认使用的语言代码，支持 `jp`/`zh`/`en`。 | `jp` |
@@ -204,7 +219,7 @@ _✨ AstrBot LLM 回复语音合成插件 ✨_
 如果感觉机器人回复长文本时语音等待时间较长，可以尝试在插件配置的 **“性能配置”** 中开启 **“启用句子切分功能”**。这会显著提升长语音的合成速度，尤其是在您配置了多个TTS服务器时。理论上添加的tts服务器越多，合成长文本越快，虽然tts服务本身似乎也有切分功能，但受限于抱脸免费空间的性能，合成长文本速度还是较慢。
 
 ## 感情配置
-如果你希望使用我的模型，可以把`emotions.json`文件复制到`AstrBot\data\plugin_data\astrbot_plugin_tts_llm`文件夹下面，里面有设置好的一些感情。
+如果你希望使用示例模型，可以把 `emotions.json` 文件复制到 `AstrBot\data\plugin_data\astrbot_plugin_genie_tts_llm` 文件夹下面，里面有设置好的一些感情。
 
 ## 📝 开发说明
 本插件的开发过程得到了 AI 的大量协助，并在 v1.2.0 版本中对代码结构进行了重构，以提升可维护性。如果代码或功能中存在任何不妥之处，敬请谅解并通过 Issue 提出，感谢您的支持！
@@ -212,3 +227,4 @@ _✨ AstrBot LLM 回复语音合成插件 ✨_
 ## 🤝 致谢
 
 - 本插件的语音合成功能由 [**Genie TTS**](https://github.com/High-Logic/Genie) 库提供核心支持，由衷感谢原作者的杰出工作。
+- 本 fork 基于 [clown145/astrbot_plugin_tts_llm](https://github.com/clown145/astrbot_plugin_tts_llm) 调整。

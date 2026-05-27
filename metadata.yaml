@@ -1,5 +1,7 @@
-name: astrbot_plugin_tts_llm
-author: clown145
-description: 一个基于Genie的tts插件，支持多语言(jp/zh/en)合成，可以注册感情，支持自动情感识别与LLM情感注入，可以使用抱脸的免费算力进行推理(较慢)。
-version: 1.3.7
-repo: "https://github.com/clown145/astrbot_plugin_tts_llm"
+name: astrbot_plugin_genie_tts_llm
+display_name: Genie TTS LLM
+author: Whereis-Alice
+description: 一个基于 Genie TTS 的 LLM 回复语音合成插件，支持多角色、多感情、翻译、情感识别和可配置触发频率。
+desc: 一个基于 Genie TTS 的 LLM 回复语音合成插件，支持多角色、多感情、翻译、情感识别和可配置触发频率。
+version: 1.4.0
+repo: "https://github.com/Whereis-Alice/astrbot_plugin_genie_tts_llm"

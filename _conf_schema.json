@@ -1,13 +1,15 @@
 {
   "enable_group_tts_by_default": {
-    "title": "🌐 默认开启全部群语音",
-    "description": "开启后所有群聊默认启用群组级语音合成，无需配置群组白名单或执行 /ttg。群组黑名单仍优先；/ttg-q 可临时关闭当前群，插件重启后恢复默认。",
+    "title": "默认开启全部群语音",
+    "description": "所有群默认开启",
+    "hint": "开启后无需配置群组白名单或执行 /ttg。群组黑名单仍优先；/ttg-q 可临时关闭当前群，插件重启后恢复默认。",
     "type": "bool",
     "default": false
   },
   "group_whitelist": {
-    "title": "✅ 群组白名单",
-    "description": "白名单中的群组将在 Bot 启动时自动开启全局语音合成（无需手动执行 /ttg 指令）。当“默认开启全部群语音”关闭时使用。填入群号，例如：123456789",
+    "title": "群组白名单",
+    "description": "启动时自动开启",
+    "hint": "当“默认开启全部群语音”关闭时生效。填写群号，例如：123456789。",
     "type": "list",
     "items": {
       "type": "string"
@@ -15,8 +17,9 @@
     "default": []
   },
   "group_blacklist": {
-    "title": "🚫 群组黑名单",
-    "description": "黑名单中的群组将完全禁用语音合成的所有功能和指令。填入群号，例如：123456789",
+    "title": "群组黑名单",
+    "description": "彻底禁用群",
+    "hint": "黑名单中的群组将禁用语音合成的所有功能和指令。填写群号，例如：123456789。",
     "type": "list",
     "items": {
       "type": "string"
@@ -24,8 +27,9 @@
     "default": []
   },
   "tts_servers": {
-    "title": "🔊 TTS 服务器列表",
-    "description": "TTS 服务器地址列表（按顺序尝试）。支持多个，用于负载均衡或故障转移。",
+    "title": "TTS 服务器列表",
+    "description": "Genie TTS 根地址",
+    "hint": "填写 Space 或本地服务根地址，不要带 /tts。支持多个地址，插件会按顺序尝试。",
     "type": "list",
     "items": {
       "type": "string"
@@ -35,20 +39,23 @@
     ]
   },
   "default_character": {
-    "title": "🎭 默认角色名称",
-    "description": "开启 TTS 时使用的默认角色。必须与 Genie-TTS 服务端加载的角色名一致。",
+    "title": "默认角色名称",
+    "description": "默认角色",
+    "hint": "必须与 Genie TTS 服务端已加载的角色名一致，例如 kisaki、aoi、oka。",
     "type": "string",
     "default": "kisaki"
   },
   "default_emotion_name": {
-    "title": "😊 默认感情名称",
-    "description": "开启 TTS 时使用的默认感情/情绪。必须已通过「/注册感情」命令注册。",
+    "title": "默认感情名称",
+    "description": "默认感情",
+    "hint": "固定情感模式下使用。必须已通过 /注册感情 注册，或已导入 emotions.json。",
     "type": "string",
-    "default": "default"
+    "default": "开心"
   },
   "tts_default_language": {
-    "title": "🌐 TTS 默认语言",
-    "description": "TTS 合成的默认语言代码。当感情未指定语言时使用此值。jp=日语, zh=中文, en=英语",
+    "title": "TTS 默认语言",
+    "description": "默认语言代码",
+    "hint": "当感情没有单独指定语言时使用。jp=日语，zh=中文，en=英语。",
     "type": "string",
     "default": "jp",
     "options": [
@@ -58,153 +65,221 @@
     ]
   },
   "enable_translation": {
-    "title": "🔄 启用翻译功能",
-    "description": "是否启用翻译功能（将中文翻译为目标语言）。如果您使用的是中文模型，请关闭此选项。",
+    "title": "启用翻译功能",
+    "description": "合成前翻译",
+    "hint": "开启后会把回复翻译为目标语言再送入 TTS。若你的 TTS 模型直接支持中文，可关闭。",
     "type": "bool",
     "default": true
   },
+  "enable_translation_debug_log": {
+    "title": "记录翻译结果",
+    "description": "输出到日志",
+    "hint": "开启后会在 AstrBot 日志中输出原文和最终送入 TTS 的合成文本，方便排查翻译或标签提取问题。",
+    "type": "bool",
+    "default": false
+  },
   "enable_tts_text_cleaning": {
     "title": "启用 TTS 文本清洗",
-    "description": "在请求 TTS 前按正则清洗文本（例如去掉括号内容）。",
+    "description": "正则清洗文本",
+    "hint": "在请求 TTS 前按下方正则清理文本，常用于去掉括号内心理描写或舞台说明。",
     "type": "bool",
     "default": false
   },
   "tts_text_clean_regex": {
     "title": "TTS 清洗正则",
-    "description": "用于 TTS 前文本清洗的正则表达式。默认删除括号及其中内容。",
+    "description": "清洗表达式",
+    "hint": "仅在启用文本清洗时生效。默认删除中英文括号、方括号、花括号、尖括号及其中内容。",
     "type": "string",
     "default": "\\([^()]*\\)|（[^（）]*）|\\[[^\\[\\]]*\\]|【[^【】]*】|\\{[^{}]*\\}|｛[^｛｝]*｝|<[^<>]*>|《[^《》]*》"
   },
   "tts_timeout_seconds": {
-    "title": "⏱️ TTS 超时时间（秒）",
-    "description": "单次 TTS 请求的超时时间。超时后将跳过该请求并尝试下一个服务器。建议设置为 60-300 秒。",
+    "title": "TTS 超时时间",
+    "description": "单次请求秒数",
+    "hint": "单次 TTS 请求的超时时间。Hugging Face 免费 Space 较慢，建议 60 到 300 秒。",
     "type": "int",
     "default": 120
   },
   "enable_space_keepalive": {
-    "title": "💓 启用 Space 保活",
-    "description": "定时 ping TTS 服务器防止 Hugging Face Space 休眠。",
+    "title": "启用 Space 保活",
+    "description": "定时 ping 服务",
+    "hint": "定时访问 TTS 服务，降低 Hugging Face Space 休眠概率。",
     "type": "bool",
     "default": false
   },
   "space_keepalive_url": {
-    "title": "🔗 额外保活地址",
-    "description": "（可选）除 TTS 服务器外，额外需要保活的 URL。留空则只保活 TTS 服务器。",
+    "title": "额外保活地址",
+    "description": "可选 URL",
+    "hint": "留空则只保活 TTS 服务器列表。需要额外保活其他地址时填写。",
     "type": "string",
     "default": ""
   },
   "space_keepalive_interval_minutes": {
-    "title": "⏱️ 保活间隔（分钟）",
-    "description": "保活请求的发送间隔。Hugging Face Space 通常 30 分钟休眠，建议设置为 25。",
+    "title": "保活间隔",
+    "description": "分钟",
+    "hint": "Hugging Face Space 通常一段时间无人访问会休眠，建议设置为 25 分钟左右。",
     "type": "int",
     "default": 25
   },
   "send_text_with_audio": {
-    "title": "📝 发送语音时附带原文",
-    "description": "是否在发送语音的同时附带 LLM 的原文回复。",
+    "title": "语音附带原文",
+    "description": "同时发送文字",
+    "hint": "开启后语音和 LLM 原文一起发送；关闭后只发送语音。",
     "type": "bool",
     "default": true
   },
+  "tts_trigger_mode": {
+    "title": "语音触发模式",
+    "description": "控制生成频率",
+    "hint": "always=每次回复都生成；interval=同一会话按时间间隔生成；random=每次回复按概率生成。",
+    "type": "string",
+    "default": "always",
+    "options": [
+      "always",
+      "interval",
+      "random"
+    ]
+  },
+  "tts_trigger_interval_seconds": {
+    "title": "触发间隔秒数",
+    "description": "间隔模式使用",
+    "hint": "仅当语音触发模式为 interval 时生效。同一会话距离上次触发超过该秒数才会再次生成语音；填 0 表示不限制。",
+    "type": "int",
+    "default": 300,
+    "slider": {
+      "min": 0,
+      "max": 3600,
+      "step": 10
+    }
+  },
+  "tts_trigger_probability": {
+    "title": "随机触发概率",
+    "description": "随机模式使用",
+    "hint": "仅当语音触发模式为 random 时生效。单位为百分比：0 表示不触发，100 表示每次触发。",
+    "type": "int",
+    "default": 30,
+    "slider": {
+      "min": 0,
+      "max": 100,
+      "step": 1
+    }
+  },
   "enable_sentence_splitting": {
-    "title": "✂️ 启用句子切分",
-    "description": "将长回复切分成短句并行合成，可显著加速长文本语音生成。",
+    "title": "启用句子切分",
+    "description": "长文本分段",
+    "hint": "将长回复切成短句并行合成，可提升长文本生成速度，但会增加请求次数。",
     "type": "bool",
     "default": false
   },
   "sentences_per_chunk": {
-    "title": "📊 每段句子数",
-    "description": "每个语音分段包含的句子数量。数字越小并行度越高，但请求越频繁。",
+    "title": "每段句子数",
+    "description": "分段大小",
+    "hint": "每个语音分段包含的句子数量。数字越小并行度越高，请求也越频繁。",
     "type": "int",
     "default": 2
   },
   "sentence_split_regex": {
-    "title": "🔤 句子切分正则",
-    "description": "用于切分句子的正则表达式。括号确保标点保留在句尾。",
+    "title": "句子切分正则",
+    "description": "切分表达式",
+    "hint": "用于识别句子边界。括号用于保留标点，默认兼容中英文常见标点。",
     "type": "string",
     "default": "([。、，！？,.!?])"
   },
   "tts_max_retries": {
-    "title": "🔁 TTS 最大重试次数",
-    "description": "当语音合成失败时的最大重试次数。每次重试会尝试所有可用服务器。",
+    "title": "TTS 最大重试次数",
+    "description": "失败重试",
+    "hint": "语音合成失败时的最大重试次数。每次重试会尝试所有可用服务器。",
     "type": "int",
     "default": 3
   },
   "llm_injection_settings": {
-    "title": "🤖 LLM 提示词注入设置",
-    "description": "控制是否让 LLM 输出情感标签和翻译内容。",
+    "title": "LLM 提示词注入",
+    "description": "情感与翻译标签",
+    "hint": "控制是否让主 LLM 在回复中直接生成情感标签和翻译内容。",
     "type": "object",
     "items": {
       "enable_llm_emotion": {
-        "title": "🎭 LLM 情感识别",
-        "description": "让 LLM 在回复中添加 [emotion=xxx] 标签，自动选择合适的情感。",
+        "title": "LLM 情感识别",
+        "description": "生成情感标签",
+        "hint": "开启后会注入提示词，要求 LLM 在回复末尾添加 [emotion=xxx] 标签。",
         "type": "bool",
         "default": false
       },
       "llm_emotion_prompt": {
-        "title": "📝 情感识别提示词",
-        "description": "注入给 LLM 的情感识别提示。{emotions} 会被替换为可用情感列表。",
+        "title": "情感识别提示词",
+        "description": "注入 Prompt",
+        "hint": "{emotions} 会替换为当前角色可用的感情列表。",
         "type": "text",
         "default": "# 情感标记\n你必须在每次回复末尾添加 [emotion=xxx] 标签来表示你的情感。\n可用情感: {emotions}\n（请从上述列表中选择一个最合适的）"
       },
       "enable_llm_translation": {
-        "title": "🌐 LLM 翻译",
-        "description": "让 LLM 在回复中用 $...$ 包裹日语翻译。适合目标语言为日语的场景。",
+        "title": "LLM 直接翻译",
+        "description": "生成翻译标签",
+        "hint": "开启后会要求 LLM 在回复末尾用 $...$ 包裹日语翻译，适合目标语言为日语的场景。",
         "type": "bool",
         "default": false
       },
       "llm_translation_prompt": {
-        "title": "📝 翻译提示词",
-        "description": "注入给 LLM 的翻译提示。",
+        "title": "翻译注入提示词",
+        "description": "翻译 Prompt",
+        "hint": "用于要求主 LLM 直接给出可用于 TTS 的翻译文本。",
         "type": "text",
         "default": "# 翻译\n你必须在回复末尾用 $...$ 符号包裹对应的日语翻译。\n例：今天天气不错 $今日はいい天気ですね$"
       },
       "use_astrbot_provider": {
-        "title": "🔄 使用 AstrBot Provider 翻译",
-        "description": "使用 AstrBot 内置的 Provider 进行翻译，而非外部 API。",
+        "title": "使用 AstrBot Provider",
+        "description": "框架内翻译",
+        "hint": "开启后使用 AstrBot 已配置的 Provider 翻译，而不是下方外部翻译 API。",
         "type": "bool",
         "default": false
       },
       "astrbot_provider_id": {
-        "title": "🆔 AstrBot Provider",
-        "description": "用于翻译的 AstrBot 模型提供商。",
+        "title": "AstrBot Provider",
+        "description": "翻译提供商",
+        "hint": "用于翻译的 AstrBot 模型提供商。",
         "type": "string",
         "default": "",
         "_special": "select_provider"
       },
       "translation_prompt": {
-        "title": "📝 Provider 翻译提示词",
-        "description": "使用 AstrBot Provider 翻译时的系统提示词。",
+        "title": "Provider 翻译提示词",
+        "description": "系统提示词",
+        "hint": "使用 AstrBot Provider 翻译时传入的系统提示词。",
         "type": "text",
         "default": "Translate the following text to Japanese. Output only the translation, nothing else."
       }
     }
   },
   "translation_api": {
-    "title": "🌍 外部翻译 API 设置",
-    "description": "配置外部翻译 API（OpenAI/Gemini 兼容格式）。用于将用户文本翻译为目标语言。",
+    "title": "外部翻译 API",
+    "description": "OpenAI/Gemini 兼容",
+    "hint": "当未使用主 LLM 翻译和 AstrBot Provider 翻译时使用。",
     "type": "object",
     "items": {
       "base_url": {
-        "title": "🔗 API 地址",
-        "description": "翻译 API 的基础 URL。例：https://api.openai.com",
+        "title": "API 地址",
+        "description": "基础 URL",
+        "hint": "例如：https://api.openai.com/v1",
         "type": "string",
         "default": ""
       },
       "api_key": {
-        "title": "🔑 API 密钥",
-        "description": "翻译 API 的密钥。",
+        "title": "API 密钥",
+        "description": "密钥",
+        "hint": "外部翻译 API 的访问密钥。",
         "type": "string",
         "default": ""
       },
       "model": {
-        "title": "🧠 模型名称",
-        "description": "使用的模型。例：gpt-4o-mini, gemini-1.5-flash",
+        "title": "模型名称",
+        "description": "翻译模型",
+        "hint": "例如：gpt-4o-mini、gemini-1.5-flash。",
         "type": "string",
         "default": "gpt-4o-mini"
       },
       "api_format": {
-        "title": "📋 API 格式",
-        "description": "API 格式类型。",
+        "title": "API 格式",
+        "description": "接口类型",
+        "hint": "选择外部翻译 API 的请求格式。",
         "type": "string",
         "default": "openai",
         "options": [
@@ -213,14 +288,16 @@
         ]
       },
       "prompt": {
-        "title": "📝 翻译提示词",
-        "description": "发送给翻译 API 的系统提示词。",
+        "title": "翻译提示词",
+        "description": "系统提示词",
+        "hint": "发送给外部翻译 API 的系统提示词。",
         "type": "text",
         "default": "请将以下中文文本翻译成日语。只输出翻译结果，不要添加任何解释或其他内容。"
       },
       "w_mode_prompt": {
-        "title": "📝 自动情感模式提示词",
-        "description": "自动情感识别模式（/tts-w）使用的提示词。{emotion_list} 会被替换为情感列表，{text} 会被替换为原文。",
+        "title": "自动情感提示词",
+        "description": "翻译并选情感",
+        "hint": "自动情感识别模式使用。{emotion_list} 会替换为感情列表，{text} 会替换为原文。",
         "type": "text",
         "default": "请对以下中文内容进行翻译和情感分析。首先翻译成日语，然后从以下情感列表中选择最合适的一个：{emotion_list}。请按以下格式输出：\n[翻译后的日语文本][选择的情感名]\n\n原文：{text}"
       }
