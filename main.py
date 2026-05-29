@@ -22,7 +22,7 @@ from .external_apis import translate_text
     "astrbot_plugin_genie_tts_llm",
     "Whereis-Alice",
     "一个通过 LLM、翻译和 Genie TTS 实现语音合成的插件，支持主动语音工具",
-    "1.6.0",
+    "1.6.1",
     "https://github.com/Whereis-Alice/astrbot_plugin_genie_tts_llm",
 )
 class GenieTtsLlmPlugin(Star):
