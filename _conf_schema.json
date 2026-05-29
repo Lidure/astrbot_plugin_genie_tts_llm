@@ -219,13 +219,24 @@
   "llm_injection_settings": {
     "title": "LLM 提示词注入",
     "description": "情感与翻译标签",
-    "hint": "控制是否让主 LLM 在回复中直接生成情感标签和翻译内容。启用“生成翻译标签”后，下方“框架内翻译”会自动忽略。",
+    "hint": "用于外语 TTS 的文本准备。建议先用“外语TTS准备方式”在“主LLM注入标签”和“其它Provider翻译”之间二选一；这个选择也会同步影响 LLM 调用语音工具时的文本准备方式。",
     "type": "object",
     "items": {
+      "translation_workflow": {
+        "title": "外语TTS准备方式",
+        "description": "翻译链路二选一",
+        "hint": "llm_injection=主 LLM 在回复末尾直接给出 $翻译$，自动情感模式下也可附带 [emotion=xxx]；provider_translation=不注入翻译标签，改由下方 AstrBot Provider 或外部翻译 API 负责翻译。这个选择也会同步影响 genie_tts_speak 工具。",
+        "type": "string",
+        "default": "llm_injection",
+        "options": [
+          "llm_injection",
+          "provider_translation"
+        ]
+      },
       "enable_llm_emotion": {
         "title": "LLM 情感识别",
         "description": "生成情感标签",
-        "hint": "开启后会注入提示词，要求 LLM 在回复末尾添加 [emotion=xxx] 标签。常与“生成翻译标签”配合使用。",
+        "hint": "开启后会注入提示词，要求 LLM 在回复末尾添加 [emotion=xxx] 标签。外语场景下通常与“外语TTS准备方式=llm_injection”配合；中文直读场景也可单独开启。",
         "type": "bool",
         "default": false
       },
@@ -238,15 +249,16 @@
       },
       "enable_llm_translation": {
         "title": "LLM 直接翻译",
-        "description": "生成翻译标签",
-        "hint": "开启后会要求 LLM 在回复末尾用 $...$ 包裹日语翻译。此模式优先级更高，并会自动忽略下方“框架内翻译”。",
+        "description": "兼容旧配置",
+        "hint": "旧版兼容字段。新版请改用上方“外语TTS准备方式”。",
         "type": "bool",
-        "default": false
+        "default": false,
+        "invisible": true
       },
       "llm_translation_prompt": {
         "title": "翻译注入提示词",
         "description": "翻译 Prompt",
-        "hint": "用于要求主 LLM 直接给出可用于 TTS 的翻译文本。",
+        "hint": "仅在“外语TTS准备方式=llm_injection”时生效。用于要求主 LLM 直接给出可用于 TTS 的翻译文本。",
         "type": "text",
         "default": "# 翻译\n你必须在回复末尾用 $...$ 符号包裹对应的日语翻译。\n例：今天天气不错 $今日はいい天気ですね$"
       },
@@ -260,21 +272,22 @@
       "llm_tts_tool_prompt": {
         "title": "语音工具提示词",
         "description": "工具调用 Prompt",
-        "hint": "用于约束主 LLM 何时调用 genie_tts_speak。建议强调“仅在用户明确要求时调用”，避免日常闲聊滥用工具。",
+        "hint": "用于约束主 LLM 何时调用 genie_tts_speak。插件还会根据上方的“外语TTS准备方式”自动补充“工具里应传原文还是翻译后文本”的运行时提示。",
         "type": "text",
         "default": "# 语音工具\n当且仅当用户明确要求你直接发一条语音、说一句给他听、念一段内容、试听声音时，你可以调用 genie_tts_speak 工具。\n普通闲聊时不要调用这个工具，也不要因为用户只是提到声音、角色、语音功能就主动调用。\n调用时请传入适合直接朗读的简短文本；如果你不确定角色或情感，就把 character_name 和 emotion_name 留空，让插件沿用当前会话或默认设置。"
       },
       "use_astrbot_provider": {
         "title": "使用 AstrBot Provider",
-        "description": "框架内翻译",
-        "hint": "开启后使用 AstrBot 已配置的 Provider 翻译，而不是下方外部翻译 API。仅在未开启“生成翻译标签”时生效。",
+        "description": "兼容旧配置",
+        "hint": "旧版兼容字段。新版请改用上方“外语TTS准备方式”。",
         "type": "bool",
-        "default": false
+        "default": false,
+        "invisible": true
       },
       "astrbot_provider_id": {
         "title": "AstrBot Provider",
         "description": "翻译提供商",
-        "hint": "用于翻译的 AstrBot 模型提供商。",
+        "hint": "当“外语TTS准备方式=provider_translation”时优先使用它来翻译；自动情感模式下也会让它一起返回情感名。",
         "type": "string",
         "default": "",
         "_special": "select_provider"
@@ -282,7 +295,7 @@
       "translation_prompt": {
         "title": "Provider 翻译提示词",
         "description": "系统提示词",
-        "hint": "使用 AstrBot Provider 翻译时传入的系统提示词。若已开启“生成翻译标签”，本项不会生效。",
+        "hint": "仅在“外语TTS准备方式=provider_translation”时生效。用于普通翻译场景的系统提示词。",
         "type": "text",
         "default": "Translate the following text to Japanese. Output only the translation, nothing else."
       }
@@ -291,7 +304,7 @@
   "translation_api": {
     "title": "外部翻译 API",
     "description": "OpenAI/Gemini 兼容",
-    "hint": "当未使用主 LLM 翻译和 AstrBot Provider 翻译时使用。",
+    "hint": "在“外语TTS准备方式=provider_translation”时，若未配置 AstrBot Provider，可改用这里的外部翻译 API；也可作为 Provider 不可用时的备用链路。",
     "type": "object",
     "items": {
       "base_url": {
@@ -336,7 +349,7 @@
       "w_mode_prompt": {
         "title": "自动情感提示词",
         "description": "翻译并选情感",
-        "hint": "自动情感识别模式使用。{emotion_list} 会替换为感情列表，{text} 会替换为原文。",
+        "hint": "自动情感识别模式使用。无论你走 AstrBot Provider 还是外部翻译 API，这个模板都会用于“翻译并选择情感”。{emotion_list} 会替换为感情列表，{text} 会替换为原文。",
         "type": "text",
         "default": "请对以下中文内容进行翻译和情感分析。首先翻译成日语，然后从以下情感列表中选择最合适的一个：{emotion_list}。请按以下格式输出：\n[翻译后的日语文本][选择的情感名]\n\n原文：{text}"
       }

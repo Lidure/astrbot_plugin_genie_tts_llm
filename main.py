@@ -22,7 +22,7 @@ from .external_apis import translate_text
     "astrbot_plugin_genie_tts_llm",
     "Whereis-Alice",
     "一个通过 LLM、翻译和 Genie TTS 实现语音合成的插件，支持主动语音工具",
-    "1.6.1",
+    "1.6.2",
     "https://github.com/Whereis-Alice/astrbot_plugin_genie_tts_llm",
 )
 class GenieTtsLlmPlugin(Star):
@@ -151,28 +151,79 @@ class GenieTtsLlmPlugin(Star):
             f"合成文本: {self._preview_log_text(target_text)}"
         )
 
+    def _normalize_translation_workflow(self, workflow: Optional[object]) -> str:
+        normalized = str(workflow or "").strip().lower()
+        workflow_aliases = {
+            "llm_injection": "llm_injection",
+            "llm": "llm_injection",
+            "inject": "llm_injection",
+            "prompt_injection": "llm_injection",
+            "provider_translation": "provider_translation",
+            "provider": "provider_translation",
+            "astrbot_provider": "provider_translation",
+            "backend": "provider_translation",
+        }
+        return workflow_aliases.get(normalized, "")
+
+    def _get_translation_workflow(self) -> str:
+        settings = self.config.get("llm_injection_settings", {})
+        configured_workflow = self._normalize_translation_workflow(
+            settings.get("translation_workflow")
+        )
+        if configured_workflow:
+            return configured_workflow
+
+        if settings.get("enable_llm_translation", False):
+            return "llm_injection"
+
+        if settings.get("use_astrbot_provider", False) or self._has_external_translation_api_config():
+            return "provider_translation"
+
+        return "llm_injection"
+
+    def _should_inject_llm_translation_tags(self) -> bool:
+        if not self.config.get("enable_translation", True):
+            return False
+        return self._get_translation_workflow() == "llm_injection"
+
+    def _should_inject_llm_emotion_tags(self) -> bool:
+        settings = self.config.get("llm_injection_settings", {})
+        if not settings.get("enable_llm_emotion", False):
+            return False
+
+        if not self.config.get("enable_translation", True):
+            return True
+
+        return self._get_translation_workflow() == "llm_injection"
+
+    def _get_tts_target_language_name(self) -> str:
+        language_code = str(self.config.get("tts_default_language", "jp") or "jp").strip().lower()
+        language_names = {
+            "jp": "日语",
+            "ja": "日语",
+            "zh": "中文",
+            "en": "英语",
+        }
+        return language_names.get(language_code, language_code or "目标语言")
+
     def _should_use_astrbot_provider_translation(
         self, disable_when_llm_translation_enabled: bool = False
     ) -> bool:
         settings = self.config.get("llm_injection_settings", {})
-        if not settings.get("use_astrbot_provider", False):
-            return False
-
         provider_id = settings.get("astrbot_provider_id")
-        if not provider_id:
-            return False
 
-        if disable_when_llm_translation_enabled and settings.get(
-            "enable_llm_translation", False
-        ):
-            if not self._llm_translation_conflict_logged:
+        if disable_when_llm_translation_enabled and self._should_inject_llm_translation_tags():
+            if provider_id and not self._llm_translation_conflict_logged:
                 logger.info(
-                    "已启用主 LLM 直接生成翻译标签，框架内翻译将自动忽略，避免与注入模式冲突。"
+                    "当前“外语TTS准备方式”为主 LLM 注入标签，AstrBot Provider 翻译将自动忽略。"
                 )
                 self._llm_translation_conflict_logged = True
             return False
 
-        return True
+        if self._get_translation_workflow() != "provider_translation":
+            return False
+
+        return bool(provider_id)
 
     def _has_external_translation_api_config(self) -> bool:
         api_config = self.config.get("translation_api", {})
@@ -674,7 +725,10 @@ class GenieTtsLlmPlugin(Star):
                 )
             return f"角色 '{char_name}' 目前没有可用的情感配置。"
 
-        if self.config.get("enable_translation", True):
+        translation_enabled = self.config.get("enable_translation", True)
+        translation_workflow = self._get_translation_workflow()
+
+        if translation_enabled and translation_workflow == "provider_translation":
             target_text = await self._translate_text_with_backends(text)
         else:
             target_text = text
@@ -692,7 +746,7 @@ class GenieTtsLlmPlugin(Star):
 
         tts_target_text = target_text
         if output_mode == "split_audio_text":
-            if self.config.get("enable_translation", True):
+            if translation_enabled and translation_workflow == "provider_translation":
                 tts_target_text = await self._translate_text_with_backends(tts_text)
                 self._log_translation_result(session_id, tts_text, tts_target_text)
             else:
@@ -805,22 +859,22 @@ class GenieTtsLlmPlugin(Star):
     ) -> Optional[str]:
         settings = self.config.get("llm_injection_settings", {})
         target_text = None
+        translation_prompt = settings.get(
+            "translation_prompt",
+            "Translate the following text to Japanese. Output only the translation, nothing else.",
+        )
 
-        provider_id = settings.get("astrbot_provider_id")
         if self._should_use_astrbot_provider_translation(
             disable_when_llm_translation_enabled=disable_provider_during_llm_translation
-        ) and provider_id:
+        ):
             try:
+                provider_id = settings.get("astrbot_provider_id")
                 provider = self.context.get_provider_by_id(provider_id)
                 if provider:
-                    trans_prompt = settings.get(
-                        "translation_prompt",
-                        "Translate the following text to Japanese. Output only the translation, nothing else.",
-                    )
                     llm_resp = await provider.text_chat(
-                        prompt=original_text, system_prompt=trans_prompt
+                        prompt=original_text, system_prompt=translation_prompt
                     )
-                    target_text = llm_resp.completion_text
+                    target_text = llm_resp.completion_text.strip()
                 else:
                     logger.error(f"未找到 Provider ID: {provider_id}")
             except Exception as e:
@@ -830,10 +884,67 @@ class GenieTtsLlmPlugin(Star):
             api_config = self.config.get("translation_api", {})
             if self._has_external_translation_api_config():
                 target_text = await translate_text(
-                    original_text, self.http_client, api_config
+                    original_text,
+                    self.http_client,
+                    api_config,
+                    translation_prompt,
                 )
 
         return target_text
+
+    async def _translate_text_and_pick_emotion_with_backends(
+        self, original_text: str, emotion_names: list[str]
+    ) -> Tuple[Optional[str], Optional[str]]:
+        api_config = self.config.get("translation_api", {})
+        prompt_template = api_config.get(
+            "w_mode_prompt",
+            "请对以下中文内容进行翻译和情感分析。首先翻译成日语，然后从以下情感列表中选择最合适的一个：{emotion_list}。请按以下格式输出：\n[翻译后的日语文本][选择的情感名]\n\n原文：{text}",
+        )
+        emotion_list_str = ", ".join(emotion_names)
+        try:
+            request_prompt = prompt_template.format(
+                emotion_list=emotion_list_str, text=original_text
+            )
+        except KeyError:
+            request_prompt = prompt_template
+
+        strict_system_prompt = (
+            "你是翻译与情感分析助手。请严格按照用户要求的格式作答，"
+            "只输出翻译后的文本和末尾方括号中的情感名，不要添加解释。"
+        )
+
+        backend_result = None
+        if self._should_use_astrbot_provider_translation():
+            settings = self.config.get("llm_injection_settings", {})
+            provider_id = settings.get("astrbot_provider_id")
+            try:
+                provider = self.context.get_provider_by_id(provider_id)
+                if provider:
+                    llm_resp = await provider.text_chat(
+                        prompt=request_prompt, system_prompt=strict_system_prompt
+                    )
+                    backend_result = llm_resp.completion_text.strip()
+                else:
+                    logger.error(f"未找到 Provider ID: {provider_id}")
+            except Exception as e:
+                logger.error(f"AstrBot Provider 自动情感翻译失败: {e}")
+
+        if not backend_result and self._has_external_translation_api_config():
+            backend_result = await translate_text(
+                request_prompt,
+                self.http_client,
+                api_config,
+                strict_system_prompt,
+            )
+
+        if not backend_result:
+            return None, None
+
+        match = re.search(r"(.*)\[(.+?)\]\s*$", backend_result.strip(), re.DOTALL)
+        if not match:
+            return backend_result.strip(), None
+
+        return match.group(1).strip(), match.group(2).strip()
 
     def _build_llm_tool_prompt(self) -> Optional[str]:
         settings = self.config.get("llm_injection_settings", {})
@@ -842,7 +953,28 @@ class GenieTtsLlmPlugin(Star):
 
         prompt_template = settings.get("llm_tts_tool_prompt", "")
         prompt = str(prompt_template).strip()
-        return prompt or None
+        if not prompt:
+            return None
+
+        runtime_lines = []
+        if self.config.get("enable_translation", True):
+            target_language_name = self._get_tts_target_language_name()
+            if self._get_translation_workflow() == "llm_injection":
+                runtime_lines.append(
+                    f"当前语音合成目标语言是{target_language_name}。如果你调用 genie_tts_speak，"
+                    f"请先把要朗读的内容翻成{target_language_name}，再把翻译后的文本直接填入 text 参数。"
+                )
+            else:
+                runtime_lines.append(
+                    f"当前语音合成目标语言是{target_language_name}。如果你调用 genie_tts_speak，"
+                    "text 参数直接填写原文即可，插件会在发送前自动翻译。"
+                )
+        else:
+            runtime_lines.append(
+                "当前语音合成不做翻译，text 参数直接填写最终要朗读的内容即可。"
+            )
+
+        return "\n".join([prompt, *runtime_lines]).strip()
 
     async def _synthesize_speech_from_context(
         self, text: str, session_id: str
@@ -887,10 +1019,11 @@ class GenieTtsLlmPlugin(Star):
             return
 
         settings = self.config.get("llm_injection_settings", {})
-        enable_emotion = settings.get("enable_llm_emotion", False)
-        enable_translation = settings.get("enable_llm_translation", False)
+        enable_emotion = self._should_inject_llm_emotion_tags()
+        enable_translation = self._should_inject_llm_translation_tags()
+        tool_prompt = self._build_llm_tool_prompt()
 
-        if not enable_emotion and not enable_translation:
+        if not enable_emotion and not enable_translation and not tool_prompt:
             return
 
         prompts_to_inject = []
@@ -927,7 +1060,6 @@ class GenieTtsLlmPlugin(Star):
             if trans_prompt:
                 prompts_to_inject.append(trans_prompt)
 
-        tool_prompt = self._build_llm_tool_prompt()
         if tool_prompt:
             prompts_to_inject.append(tool_prompt)
 
@@ -970,8 +1102,9 @@ class GenieTtsLlmPlugin(Star):
             return
 
         settings = self.config.get("llm_injection_settings", {})
-        enable_llm_emotion = settings.get("enable_llm_emotion", False)
-        enable_llm_translation = settings.get("enable_llm_translation", False)
+        enable_llm_emotion = self._should_inject_llm_emotion_tags()
+        enable_llm_translation = self._should_inject_llm_translation_tags()
+        translation_workflow = self._get_translation_workflow()
 
         # 1. 提取情感标签 [emotion=xxx]
         emotion_match = re.search(r"\[emotion=(.*?)\]", original_text)
@@ -1055,48 +1188,23 @@ class GenieTtsLlmPlugin(Star):
             # 翻译功能已关闭，直接使用原文（适合中文模型）
             target_text = original_text
         else:
-            # 需要翻译
-            api_config = self.config.get("translation_api", {})
-            has_external_translation_api = self._has_external_translation_api_config()
-            # 如果是在 w 模式下且没有注入情感，我们需要同时获取情感和翻译 (旧逻辑)
-            if (
-                session_id in self.w_active_sessions
-                and not target_emotion
-                and has_external_translation_api
-            ):
-                # 旧的自动情感识别逻辑
-                character_emotions = self.emotion_manager.emotions_data[char_name]
-                w_prompt_template = api_config.get("w_mode_prompt")
-                if w_prompt_template:
-                    emotion_list_str = ", ".join(character_emotions.keys())
-                    augmented_prompt = w_prompt_template.format(
-                        emotion_list=emotion_list_str, text=original_text
+            if translation_workflow == "provider_translation":
+                # provider 模式下，自动情感识别可由独立翻译 Provider 一并完成。
+                if session_id in self.w_active_sessions and not target_emotion:
+                    character_emotions = list(
+                        self.emotion_manager.emotions_data[char_name].keys()
                     )
-                    japanese_text_with_emotion = await translate_text(
-                        augmented_prompt,
-                        self.http_client,
-                        api_config,
-                        w_prompt_template,
-                    )
-
-                    if japanese_text_with_emotion:
-                        match = re.search(
-                            r"(.*)\[(.+?)\]\s*$",
-                            japanese_text_with_emotion.strip(),
-                            re.DOTALL,
+                    target_text, target_emotion = (
+                        await self._translate_text_and_pick_emotion_with_backends(
+                            original_text, character_emotions
                         )
-                        if match:
-                            target_text, target_emotion = (
-                                match.group(1).strip(),
-                                match.group(2).strip(),
-                            )
+                    )
 
-            # 普通翻译逻辑
-            if not target_text:
-                target_text = await self._translate_text_with_backends(
-                    original_text,
-                    disable_provider_during_llm_translation=True,
-                )
+                if not target_text:
+                    target_text = await self._translate_text_with_backends(
+                        original_text,
+                        disable_provider_during_llm_translation=True,
+                    )
 
         self._log_translation_result(session_id, original_text, target_text)
 
@@ -1119,7 +1227,7 @@ class GenieTtsLlmPlugin(Star):
                     injected_translation, output_mode
                 )
                 target_text = translated_audio_text or target_text
-            elif self.config.get("enable_translation", True):
+            elif self.config.get("enable_translation", True) and translation_workflow == "provider_translation":
                 target_text = await self._translate_text_with_backends(
                     tts_source_text,
                     disable_provider_during_llm_translation=True,

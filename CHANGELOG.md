@@ -1,5 +1,12 @@
 # 更新日志
 
+## v1.6.2
+
+- **[调整] 外语TTS准备方式二选一**：新增 `translation_workflow` 配置，统一为 `llm_injection` 和 `provider_translation` 两种外语语音准备模式，避免主 LLM 注入翻译与独立翻译 Provider 混用。
+- **[修复] LLM 工具调用翻译链路**：`genie_tts_speak` 现在会同步遵循外语TTS准备方式。注入模式下直接使用主 LLM 提供的目标语言文本；Provider 模式下由插件负责翻译后再发起 TTS。
+- **[修复] 语音工具提示注入时机**：即使未开启情感/翻译标签注入，只要开启了语音工具提示，插件也会正确向主 LLM 注入工具调用约束。
+- **[优化] 自动情感识别的 Provider 路径**：在 `provider_translation` 模式下，自动情感识别会优先让 AstrBot Provider 或外部翻译 API 同时返回“翻译结果 + 情感名”。
+
 ## v1.6.1
 
 - **[修复] 翻译注入与框架内翻译冲突**：开启“生成翻译标签”后，会自动忽略 AstrBot Provider 翻译，避免两套翻译链同时参与自动 TTS。

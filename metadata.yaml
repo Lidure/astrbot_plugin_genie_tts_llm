@@ -3,5 +3,5 @@ display_name: Genie TTS LLM
 author: Whereis-Alice
 description: 一个基于 Genie TTS 的 LLM 回复语音合成插件，支持多角色、多感情、翻译、情感识别、主动语音工具、可配置工具提示注入和触发频率。
 desc: 一个基于 Genie TTS 的 LLM 回复语音合成插件，支持多角色、多感情、翻译、情感识别、主动语音工具、可配置工具提示注入和触发频率。
-version: 1.6.1
+version: 1.6.2
 repo: "https://github.com/Whereis-Alice/astrbot_plugin_genie_tts_llm"

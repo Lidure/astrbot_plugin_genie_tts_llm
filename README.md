@@ -118,23 +118,35 @@ _✨ AstrBot LLM 回复语音合成插件 ✨_
 ### 翻译API配置
 | 配置项 | 说明 | 示例 |
 | :--- | :--- | :--- |
-| **翻译API配置** | 用于将中文LLM回复翻译成日语。支持 `openai` 和 `gemini` 格式。 |  |
+| **翻译API配置** | 在“外语TTS准备方式 = provider_translation”时可作为独立翻译链使用；支持 `openai` 和 `gemini` 格式。 |  |
 | ├ `base_url` | API 的基础地址。 | `https://api.openai.com/v1` |
 | ├ `api_key` | 您的 API 密钥。 | `sk-xxxxxx` |
 | ├ `model` | 用于翻译的模型。 | `gpt-4o-mini` |
-| ├ `w_mode_prompt` | 自动情感识别模式的提示词模板。 | (见插件配置页默认值) |
+| ├ `w_mode_prompt` | 自动情感识别模式的提示词模板。无论使用 AstrBot Provider 还是外部 API，这个模板都会用于“翻译并选择情感”。 | (见插件配置页默认值) |
 
 ### LLM 注入与高级翻译设置 (v1.3.0 新增)
 | 配置项 | 说明 | 示例 |
 | :--- | :--- | :--- |
-| **让主LLM直接生成情感标签** | 开启后，插件会向LLM注入提示词，要求其直接生成 `[emotion=xxx]` 标签。常与主LLM直接翻译搭配。 | `true` / `false` |
-| **让主LLM直接生成日语翻译** | 开启后，插件会向LLM注入提示词，要求其直接生成 `$xxx$` 翻译。启用后会自动忽略下方的 AstrBot Provider 翻译。 | `true` / `false` |
+| **外语TTS准备方式** | 二选一。`llm_injection` = 主 LLM 在回复末尾直接生成 `$翻译$`，自动情感模式下也可附带 `[emotion=xxx]`；`provider_translation` = 不注入翻译标签，改由 AstrBot Provider 或外部 API 翻译。这个选择也会同步影响 `genie_tts_speak` 工具调用。 | `llm_injection` / `provider_translation` |
+| **让主LLM直接生成情感标签** | 开启后，插件会向LLM注入提示词，要求其直接生成 `[emotion=xxx]` 标签。外语场景下一般与 `llm_injection` 搭配；中文直读场景也可单独开启。 | `true` / `false` |
 | **注入语音工具提示** | 开启后，会向主 LLM 额外注入一段提示词，指导它只在用户明确要求“发语音/说一句/念给我听”时调用 `genie_tts_speak`。 | `true` / `false` |
 | **情感注入提示词模板** | 自定义情感注入的 Prompt。`{emotions}` 占位符会被替换为可用情感列表。 | (见默认值) |
-| **翻译注入提示词模板** | 自定义翻译注入的 Prompt。 | (见默认值) |
-| **语音工具提示词** | 自定义约束 `genie_tts_speak` 何时可调用的 Prompt。建议保留“仅用户明确要求时才调用”的语义。 | (见默认值) |
-| **使用 AstrBot 框架内的模型进行翻译** | 仅在未开启主LLM生成翻译时生效。可使用框架内配置的其他 Provider 进行翻译。 | `true` / `false` |
-| **选择用于翻译的模型提供商** | 选择具体的 Provider ID；如果已开启主LLM生成翻译，则此项会被忽略。 | `openai_provider` |
+| **翻译注入提示词模板** | 仅在 `llm_injection` 时生效。用于要求主 LLM 直接给出可用于 TTS 的翻译文本。 | (见默认值) |
+| **语音工具提示词** | 自定义约束 `genie_tts_speak` 何时可调用的 Prompt。插件还会根据“外语TTS准备方式”自动补充：工具里该传原文，还是传翻译后的文本。 | (见默认值) |
+| **AstrBot Provider** | 在 `provider_translation` 模式下优先用于翻译；自动情感识别模式下也会让它一起返回情感名。 | `openai_provider` |
+| **Provider 翻译提示词** | 仅在 `provider_translation` 模式下生效，用于普通翻译场景。 | (见默认值) |
+
+### 外语语音的推荐思路
+
+对于日语这类外语语音，建议只在下面两种模式里选一种，不要混着开：
+
+1. **`llm_injection`**  
+   主 LLM 直接在回复末尾生成 `$...$` 翻译；如果你还开启了情感标签注入，也会一并生成 `[emotion=xxx]`。  
+   这种模式下，`genie_tts_speak` 工具也会被提示“把翻译后的文本直接传进 `text` 参数”。
+
+2. **`provider_translation`**  
+   不给主 LLM 注入翻译标签，改由 AstrBot Provider 或外部翻译 API 负责翻译。  
+   这种模式下，`genie_tts_speak` 工具可以直接传原文，插件会在发送前先翻译再请求 TTS。
 
 ### 性能配置 (v1.2.0 新增)
 | 配置项 | 说明 | 示例 |
@@ -182,6 +194,8 @@ _✨ AstrBot LLM 回复语音合成插件 ✨_
 - 这个工具不会替代平时的三种自动触发模式。
 - 它更适合一次性的“来段语音试听”场景。
 - 工具调用的发送方式由 **LLM工具输出模式** 单独控制，默认是纯语音。
+- 如果当前 **外语TTS准备方式** 为 `llm_injection`，主 LLM 会被提示先把内容翻成目标语言，再调用工具。
+- 如果当前 **外语TTS准备方式** 为 `provider_translation`，工具可以直接传原文，插件会负责翻译。
 - 工具发送过语音后，插件会自动跳过本轮普通自动 TTS，避免同一轮回复重复发两次声音。
 
 ### 💡 典型使用流程
