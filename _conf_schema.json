@@ -219,13 +219,13 @@
   "llm_injection_settings": {
     "title": "LLM 提示词注入",
     "description": "情感与翻译标签",
-    "hint": "控制是否让主 LLM 在回复中直接生成情感标签和翻译内容。",
+    "hint": "控制是否让主 LLM 在回复中直接生成情感标签和翻译内容。启用“生成翻译标签”后，下方“框架内翻译”会自动忽略。",
     "type": "object",
     "items": {
       "enable_llm_emotion": {
         "title": "LLM 情感识别",
         "description": "生成情感标签",
-        "hint": "开启后会注入提示词，要求 LLM 在回复末尾添加 [emotion=xxx] 标签。",
+        "hint": "开启后会注入提示词，要求 LLM 在回复末尾添加 [emotion=xxx] 标签。常与“生成翻译标签”配合使用。",
         "type": "bool",
         "default": false
       },
@@ -239,7 +239,7 @@
       "enable_llm_translation": {
         "title": "LLM 直接翻译",
         "description": "生成翻译标签",
-        "hint": "开启后会要求 LLM 在回复末尾用 $...$ 包裹日语翻译，适合目标语言为日语的场景。",
+        "hint": "开启后会要求 LLM 在回复末尾用 $...$ 包裹日语翻译。此模式优先级更高，并会自动忽略下方“框架内翻译”。",
         "type": "bool",
         "default": false
       },
@@ -267,7 +267,7 @@
       "use_astrbot_provider": {
         "title": "使用 AstrBot Provider",
         "description": "框架内翻译",
-        "hint": "开启后使用 AstrBot 已配置的 Provider 翻译，而不是下方外部翻译 API。",
+        "hint": "开启后使用 AstrBot 已配置的 Provider 翻译，而不是下方外部翻译 API。仅在未开启“生成翻译标签”时生效。",
         "type": "bool",
         "default": false
       },
@@ -282,7 +282,7 @@
       "translation_prompt": {
         "title": "Provider 翻译提示词",
         "description": "系统提示词",
-        "hint": "使用 AstrBot Provider 翻译时传入的系统提示词。",
+        "hint": "使用 AstrBot Provider 翻译时传入的系统提示词。若已开启“生成翻译标签”，本项不会生效。",
         "type": "text",
         "default": "Translate the following text to Japanese. Output only the translation, nothing else."
       }

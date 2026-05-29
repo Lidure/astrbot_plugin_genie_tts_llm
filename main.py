@@ -39,6 +39,7 @@ class GenieTtsLlmPlugin(Star):
         self.skip_next_auto_tts_sessions: Set[str] = set()
         self._keepalive_stop_event = asyncio.Event()
         self._keepalive_task: Optional[asyncio.Task] = None
+        self._llm_translation_conflict_logged = False
 
         # 初始化辅助模块
         plugin_data_dir = StarTools.get_data_dir("astrbot_plugin_genie_tts_llm")
@@ -149,6 +150,33 @@ class GenieTtsLlmPlugin(Star):
             f"[{session_id}] TTS翻译结果 | 原文: {self._preview_log_text(source_text)} | "
             f"合成文本: {self._preview_log_text(target_text)}"
         )
+
+    def _should_use_astrbot_provider_translation(
+        self, disable_when_llm_translation_enabled: bool = False
+    ) -> bool:
+        settings = self.config.get("llm_injection_settings", {})
+        if not settings.get("use_astrbot_provider", False):
+            return False
+
+        provider_id = settings.get("astrbot_provider_id")
+        if not provider_id:
+            return False
+
+        if disable_when_llm_translation_enabled and settings.get(
+            "enable_llm_translation", False
+        ):
+            if not self._llm_translation_conflict_logged:
+                logger.info(
+                    "已启用主 LLM 直接生成翻译标签，框架内翻译将自动忽略，避免与注入模式冲突。"
+                )
+                self._llm_translation_conflict_logged = True
+            return False
+
+        return True
+
+    def _has_external_translation_api_config(self) -> bool:
+        api_config = self.config.get("translation_api", {})
+        return bool(api_config.get("base_url") and api_config.get("api_key"))
 
     def _normalize_tts_output_mode(
         self, mode: Optional[object], default: str
@@ -770,13 +798,18 @@ class GenieTtsLlmPlugin(Star):
         )
         return resolved_char, resolved_emotion, emotion_data
 
-    async def _translate_text_with_backends(self, original_text: str) -> Optional[str]:
+    async def _translate_text_with_backends(
+        self,
+        original_text: str,
+        disable_provider_during_llm_translation: bool = False,
+    ) -> Optional[str]:
         settings = self.config.get("llm_injection_settings", {})
         target_text = None
 
-        use_astrbot_provider = settings.get("use_astrbot_provider", False)
         provider_id = settings.get("astrbot_provider_id")
-        if use_astrbot_provider and provider_id:
+        if self._should_use_astrbot_provider_translation(
+            disable_when_llm_translation_enabled=disable_provider_during_llm_translation
+        ) and provider_id:
             try:
                 provider = self.context.get_provider_by_id(provider_id)
                 if provider:
@@ -795,7 +828,10 @@ class GenieTtsLlmPlugin(Star):
 
         if not target_text:
             api_config = self.config.get("translation_api", {})
-            target_text = await translate_text(original_text, self.http_client, api_config)
+            if self._has_external_translation_api_config():
+                target_text = await translate_text(
+                    original_text, self.http_client, api_config
+                )
 
         return target_text
 
@@ -1021,8 +1057,13 @@ class GenieTtsLlmPlugin(Star):
         else:
             # 需要翻译
             api_config = self.config.get("translation_api", {})
+            has_external_translation_api = self._has_external_translation_api_config()
             # 如果是在 w 模式下且没有注入情感，我们需要同时获取情感和翻译 (旧逻辑)
-            if session_id in self.w_active_sessions and not target_emotion:
+            if (
+                session_id in self.w_active_sessions
+                and not target_emotion
+                and has_external_translation_api
+            ):
                 # 旧的自动情感识别逻辑
                 character_emotions = self.emotion_manager.emotions_data[char_name]
                 w_prompt_template = api_config.get("w_mode_prompt")
@@ -1052,7 +1093,10 @@ class GenieTtsLlmPlugin(Star):
 
             # 普通翻译逻辑
             if not target_text:
-                target_text = await self._translate_text_with_backends(original_text)
+                target_text = await self._translate_text_with_backends(
+                    original_text,
+                    disable_provider_during_llm_translation=True,
+                )
 
         self._log_translation_result(session_id, original_text, target_text)
 
@@ -1076,7 +1120,10 @@ class GenieTtsLlmPlugin(Star):
                 )
                 target_text = translated_audio_text or target_text
             elif self.config.get("enable_translation", True):
-                target_text = await self._translate_text_with_backends(tts_source_text)
+                target_text = await self._translate_text_with_backends(
+                    tts_source_text,
+                    disable_provider_during_llm_translation=True,
+                )
                 self._log_translation_result(session_id, tts_source_text, target_text)
             else:
                 target_text = tts_source_text
