@@ -22,7 +22,7 @@ from .external_apis import translate_text
     "astrbot_plugin_genie_tts_llm",
     "Whereis-Alice",
     "一个通过 LLM、翻译和 Genie TTS 实现语音合成的插件，支持主动语音工具",
-    "1.6.2",
+    "1.6.3",
     "https://github.com/Whereis-Alice/astrbot_plugin_genie_tts_llm",
 )
 class GenieTtsLlmPlugin(Star):
@@ -205,6 +205,28 @@ class GenieTtsLlmPlugin(Star):
             "en": "英语",
         }
         return language_names.get(language_code, language_code or "目标语言")
+
+    def _extract_tool_text_directives(
+        self, text: str
+    ) -> Tuple[str, Optional[str], Optional[str]]:
+        working_text = (text or "").strip()
+        emotion_matches = re.findall(r"\[emotion=(.*?)\]", working_text)
+        tagged_emotion = emotion_matches[-1].strip() if emotion_matches else None
+        working_text = re.sub(r"\s*\[emotion=.*?\]\s*", " ", working_text).strip()
+
+        tagged_translation = None
+        translation_match = re.search(
+            r"(?:\$(.+?)\$|\uFF04(.+?)\uFF04)\s*$", working_text, re.DOTALL
+        )
+        if translation_match:
+            tagged_translation = (
+                translation_match.group(1) or translation_match.group(2) or ""
+            ).strip()
+            working_text = working_text[: translation_match.start()].strip()
+
+        display_text = working_text or tagged_translation or ""
+        display_text = re.sub(r"\s+", " ", display_text).strip()
+        return display_text, tagged_emotion, tagged_translation
 
     def _should_use_astrbot_provider_translation(
         self, disable_when_llm_translation_enabled: bool = False
@@ -699,9 +721,9 @@ class GenieTtsLlmPlugin(Star):
         普通闲聊不要调用这个工具；日常语音仍由插件自己的自动触发模式控制。
 
         Args:
-            text(string): 要合成为语音并直接发给用户的文本。尽量简短、自然，适合直接朗读。
+            text(string): 要合成为语音并直接发给用户的文本。必须是完整句子，句末要有标点；如果使用主LLM注入翻译模式，请传入目标语言文本。
             character_name(string): 可选。要使用的角色名；仅在明确知道已注册角色时填写，否则留空沿用当前会话或默认角色。
-            emotion_name(string): 可选。要使用的情感名；仅在明确知道已注册情感时填写，否则留空沿用当前会话、默认情感或该角色的首个可用情感。
+            emotion_name(string): 可选但建议填写。要使用的情感名；请从当前角色已注册情感中选择，让语音匹配要朗读内容的语气。
         """
         session_id = event.unified_msg_origin
         group_id = self._normalize_group_id(event.message_obj.group_id)
@@ -711,6 +733,12 @@ class GenieTtsLlmPlugin(Star):
             return "当前群组已禁用语音功能，不能直接发送 TTS 语音。"
         if not text:
             return "要发送的语音文本为空，请先给出一段需要朗读的内容。"
+
+        display_text, tagged_emotion, tagged_translation = self._extract_tool_text_directives(text)
+        if not display_text:
+            return "要发送的语音文本为空，请先给出一段需要朗读的内容。"
+        if not emotion_name and tagged_emotion:
+            emotion_name = tagged_emotion
 
         char_name, resolved_emotion, emotion_data = self._resolve_tts_profile(
             session_id, character_name, emotion_name
@@ -729,17 +757,19 @@ class GenieTtsLlmPlugin(Star):
         translation_workflow = self._get_translation_workflow()
 
         if translation_enabled and translation_workflow == "provider_translation":
-            target_text = await self._translate_text_with_backends(text)
+            target_text = await self._translate_text_with_backends(display_text)
+        elif tagged_translation:
+            target_text = tagged_translation
         else:
-            target_text = text
-        self._log_translation_result(session_id, text, target_text)
+            target_text = display_text
+        self._log_translation_result(session_id, display_text, target_text)
 
         if not target_text:
             return "语音发送失败：用于 TTS 的文本准备失败了，请检查翻译配置或日志。"
 
         output_mode = self._get_llm_tool_tts_output_mode()
         tts_text, plain_text, output_mode = self._prepare_tts_output_segments(
-            text, output_mode
+            display_text, output_mode
         )
         if not tts_text:
             return "语音发送失败：没有可用于朗读的文本。"
@@ -749,6 +779,11 @@ class GenieTtsLlmPlugin(Star):
             if translation_enabled and translation_workflow == "provider_translation":
                 tts_target_text = await self._translate_text_with_backends(tts_text)
                 self._log_translation_result(session_id, tts_text, tts_target_text)
+            elif tagged_translation:
+                translated_audio_text, _, _ = self._prepare_tts_output_segments(
+                    tagged_translation, output_mode
+                )
+                tts_target_text = translated_audio_text or tagged_translation
             else:
                 tts_target_text = tts_text
 
@@ -769,7 +804,7 @@ class GenieTtsLlmPlugin(Star):
         ok, error_message = await self._dispatch_llm_tool_tts_output(
             session_id=session_id,
             audio_path=audio_path,
-            full_display_text=text,
+            full_display_text=display_text,
             plain_display_text=plain_text,
             output_mode=output_mode,
         )
@@ -946,7 +981,7 @@ class GenieTtsLlmPlugin(Star):
 
         return match.group(1).strip(), match.group(2).strip()
 
-    def _build_llm_tool_prompt(self) -> Optional[str]:
+    def _build_llm_tool_prompt(self, session_id: Optional[str] = None) -> Optional[str]:
         settings = self.config.get("llm_injection_settings", {})
         if not settings.get("enable_llm_tts_tool_prompt", False):
             return None
@@ -957,21 +992,36 @@ class GenieTtsLlmPlugin(Star):
             return None
 
         runtime_lines = []
+        char_name = None
+        if session_id:
+            char_name, _, _ = self._resolve_tts_profile(session_id)
+        if not char_name:
+            char_name = self.config.get("default_character")
+        if char_name and self.emotion_manager.character_exists(char_name):
+            emotions = list(self.emotion_manager.emotions_data.get(char_name, {}).keys())
+            if emotions:
+                runtime_lines.append(
+                    f"当前语音角色是 {char_name}，可用情感有：{', '.join(emotions)}。"
+                    "调用 genie_tts_speak 时，请根据要朗读内容选择一个最贴切的情感填入 emotion_name；"
+                    "不要总是留空使用默认情感。"
+                )
+
         if self.config.get("enable_translation", True):
             target_language_name = self._get_tts_target_language_name()
             if self._get_translation_workflow() == "llm_injection":
                 runtime_lines.append(
                     f"当前语音合成目标语言是{target_language_name}。如果你调用 genie_tts_speak，"
-                    f"请先把要朗读的内容翻成{target_language_name}，再把翻译后的文本直接填入 text 参数。"
+                    f"请先把要朗读的内容翻成{target_language_name}，再把翻译后的完整句子直接填入 text 参数，"
+                    "并保留句末标点。"
                 )
             else:
                 runtime_lines.append(
                     f"当前语音合成目标语言是{target_language_name}。如果你调用 genie_tts_speak，"
-                    "text 参数直接填写原文即可，插件会在发送前自动翻译。"
+                    "text 参数直接填写完整原文即可，插件会在发送前自动翻译。"
                 )
         else:
             runtime_lines.append(
-                "当前语音合成不做翻译，text 参数直接填写最终要朗读的内容即可。"
+                "当前语音合成不做翻译，text 参数直接填写最终要朗读的完整句子即可。"
             )
 
         return "\n".join([prompt, *runtime_lines]).strip()
@@ -1021,7 +1071,7 @@ class GenieTtsLlmPlugin(Star):
         settings = self.config.get("llm_injection_settings", {})
         enable_emotion = self._should_inject_llm_emotion_tags()
         enable_translation = self._should_inject_llm_translation_tags()
-        tool_prompt = self._build_llm_tool_prompt()
+        tool_prompt = self._build_llm_tool_prompt(session_id)
 
         if not enable_emotion and not enable_translation and not tool_prompt:
             return

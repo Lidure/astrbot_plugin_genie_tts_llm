@@ -69,6 +69,24 @@ class TTSEngine:
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
         return cleaned
 
+    def _ensure_terminal_punctuation(self, text: str, language: str = None) -> str:
+        text = (text or "").strip()
+        if not text:
+            return text
+
+        closing_marks = "\"'”’）)]】』」》"
+        terminal_pattern = rf"[。！？!?\.．…]+[{re.escape(closing_marks)}]*$"
+        if re.search(terminal_pattern, text):
+            return text
+
+        language_code = str(language or self.config.get("tts_default_language", "jp") or "jp").lower()
+        punctuation = "." if language_code in {"en", "english"} else "。"
+        closing_match = re.search(rf"([{re.escape(closing_marks)}]+)$", text)
+        if closing_match:
+            insert_at = closing_match.start()
+            return f"{text[:insert_at]}{punctuation}{text[insert_at:]}"
+        return f"{text}{punctuation}"
+
     async def _cleanup_loop(self):
         """定期清理过期的临时音频文件"""
         while True:
@@ -395,6 +413,13 @@ class TTSEngine:
                         f"[{session_id_for_log}] TTS文本清洗后为空，跳过合成。"
                     )
                     return None
+
+            punctuated_text = self._ensure_terminal_punctuation(text_for_tts, language)
+            if punctuated_text != text_for_tts:
+                logger.info(
+                    f"[{session_id_for_log}] 已为TTS文本补充句末标点，降低尾音截断概率。"
+                )
+                text_for_tts = punctuated_text
 
             if self.config.get("enable_sentence_splitting", False):
                 sentences_per_chunk = self.config.get("sentences_per_chunk", 2)

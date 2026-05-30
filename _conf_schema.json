@@ -65,9 +65,9 @@
     ]
   },
   "enable_translation": {
-    "title": "启用翻译功能",
-    "description": "合成前翻译",
-    "hint": "开启后会把回复翻译为目标语言再送入 TTS。若你的 TTS 模型直接支持中文，可关闭。",
+    "title": "启用目标语言转换",
+    "description": "外语TTS总开关",
+    "hint": "开启后会把回复转换为 TTS 需要的目标语言；具体由“外语TTS准备方式”决定是主 LLM 注入翻译，还是 Provider 翻译。若模型直接支持原文语言，可关闭。",
     "type": "bool",
     "default": true
   },
@@ -274,7 +274,7 @@
         "description": "工具调用 Prompt",
         "hint": "用于约束主 LLM 何时调用 genie_tts_speak。插件还会根据上方的“外语TTS准备方式”自动补充“工具里应传原文还是翻译后文本”的运行时提示。",
         "type": "text",
-        "default": "# 语音工具\n当且仅当用户明确要求你直接发一条语音、说一句给他听、念一段内容、试听声音时，你可以调用 genie_tts_speak 工具。\n普通闲聊时不要调用这个工具，也不要因为用户只是提到声音、角色、语音功能就主动调用。\n调用时请传入适合直接朗读的简短文本；如果你不确定角色或情感，就把 character_name 和 emotion_name 留空，让插件沿用当前会话或默认设置。"
+        "default": "# 语音工具\n当且仅当用户明确要求你直接发一条语音、说一句给他听、念一段内容、试听声音时，你可以调用 genie_tts_speak 工具。\n普通闲聊时不要调用这个工具，也不要因为用户只是提到声音、角色、语音功能就主动调用。\n调用时请传入适合直接朗读的完整句子，并保留句末标点；请根据要朗读内容选择合适的 emotion_name，不要总是留空使用默认情感。"
       },
       "use_astrbot_provider": {
         "title": "使用 AstrBot Provider",
