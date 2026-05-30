@@ -22,7 +22,7 @@ from .external_apis import translate_text
     "astrbot_plugin_genie_tts_llm",
     "Whereis-Alice",
     "一个通过 LLM、翻译和 Genie TTS 实现语音合成的插件，支持主动语音工具",
-    "1.6.4",
+    "1.6.5",
     "https://github.com/Whereis-Alice/astrbot_plugin_genie_tts_llm",
 )
 class GenieTtsLlmPlugin(Star):
@@ -1217,6 +1217,7 @@ class GenieTtsLlmPlugin(Star):
 
         audio_path: Optional[str] = None
         target_emotion = None
+        emotion_source = ""
         target_text = None
         char_name = None
 
@@ -1240,6 +1241,7 @@ class GenieTtsLlmPlugin(Star):
                     if session_setting
                     else self.config.get("default_emotion_name")
                 )
+                emotion_source = "会话固定情感" if session_setting else "默认情感"
 
         if not char_name or not self.emotion_manager.character_exists(char_name):
             resp.result_chain.chain.append(
@@ -1250,6 +1252,7 @@ class GenieTtsLlmPlugin(Star):
         # 确定情感
         if enable_llm_emotion and injected_emotion:
             target_emotion = injected_emotion
+            emotion_source = "LLM情感标签"
 
         # 确定翻译文本
         if enable_llm_translation and injected_translation:
@@ -1269,6 +1272,8 @@ class GenieTtsLlmPlugin(Star):
                             original_text, character_emotions
                         )
                     )
+                    if target_emotion:
+                        emotion_source = "翻译Provider情感识别"
 
                 if not target_text:
                     target_text = await self._translate_text_with_backends(
@@ -1314,10 +1319,12 @@ class GenieTtsLlmPlugin(Star):
         # 如果此时还没有 target_emotion (比如固定模式没注入，或者自动模式失败)，使用默认
         if not target_emotion:
             target_emotion = self.config.get("default_emotion_name")
+            emotion_source = "默认情感兜底"
 
         emotion_data = self.emotion_manager.get_emotion_data(char_name, target_emotion)
         if not emotion_data:
             # 尝试回落到默认情感
+            invalid_emotion = target_emotion
             default_emotion = self.config.get("default_emotion_name")
             emotion_data = self.emotion_manager.get_emotion_data(
                 char_name, default_emotion
@@ -1327,6 +1334,18 @@ class GenieTtsLlmPlugin(Star):
                     Comp.Plain(f"\n(TTS失败: 情感'{target_emotion}'无效)")
                 )
                 return
+            target_emotion = default_emotion
+            emotion_source = f"无效情感'{invalid_emotion}'回落默认"
+            logger.warning(
+                f"[{session_id}] 自动TTS情感无效，已回落默认情感: "
+                f"{char_name} - {target_emotion}（原情感: {invalid_emotion}）"
+            )
+
+        logger.info(
+            f"[{session_id}] 自动TTS情感选择 | 角色: {char_name} | "
+            f"情感: {target_emotion} | 来源: {emotion_source or '未标记'} | "
+            f"参考音频: {emotion_data.get('ref_audio_path')}"
+        )
 
         # 合成语音
         audio_path = await self.tts_engine.synthesize(
