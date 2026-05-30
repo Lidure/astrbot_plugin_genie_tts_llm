@@ -272,9 +272,9 @@
       "llm_tts_tool_prompt": {
         "title": "语音工具提示词",
         "description": "工具调用 Prompt",
-        "hint": "用于约束主 LLM 何时调用 genie_tts_speak。插件还会根据上方的“外语TTS准备方式”自动补充“工具里应传原文还是翻译后文本”的运行时提示。",
+        "hint": "用于约束主 LLM 何时调用 genie_tts_speak。支持 {character} 和 {emotions} 占位符；插件还会根据上方的“外语TTS准备方式”自动补充“工具里应传原文还是翻译后文本”的运行时提示。",
         "type": "text",
-        "default": "# 语音工具\n当且仅当用户明确要求你直接发一条语音、说一句给他听、念一段内容、试听声音时，你可以调用 genie_tts_speak 工具。\n普通闲聊时不要调用这个工具，也不要因为用户只是提到声音、角色、语音功能就主动调用。\n调用时请传入适合直接朗读的完整句子，并保留句末标点；请根据要朗读内容选择合适的 emotion_name，不要总是留空使用默认情感。"
+        "default": "# 语音工具\n当且仅当用户明确要求你直接发一条语音、说一句给他听、念一段内容、试听声音时，你可以调用 genie_tts_speak 工具。\n普通闲聊时不要调用这个工具，也不要因为用户只是提到声音、角色、语音功能就主动调用。\n当前语音角色: {character}\n可用情感: {emotions}\n调用时请传入适合直接朗读的完整句子，并保留句末标点；请根据要朗读内容从可用情感中选择合适的 emotion_name，不要总是留空使用默认情感。"
       },
       "use_astrbot_provider": {
         "title": "使用 AstrBot Provider",

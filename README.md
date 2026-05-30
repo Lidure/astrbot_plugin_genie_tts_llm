@@ -132,7 +132,7 @@ _✨ AstrBot LLM 回复语音合成插件 ✨_
 | **注入语音工具提示** | 开启后，会向主 LLM 额外注入一段提示词，指导它只在用户明确要求“发语音/说一句/念给我听”时调用 `genie_tts_speak`。 | `true` / `false` |
 | **情感注入提示词模板** | 自定义情感注入的 Prompt。`{emotions}` 占位符会被替换为可用情感列表。 | (见默认值) |
 | **翻译注入提示词模板** | 仅在 `llm_injection` 时生效。用于要求主 LLM 直接给出可用于 TTS 的翻译文本。 | (见默认值) |
-| **语音工具提示词** | 自定义约束 `genie_tts_speak` 何时可调用的 Prompt。插件还会根据“外语TTS准备方式”自动补充：工具里该传原文，还是传翻译后的文本。 | (见默认值) |
+| **语音工具提示词** | 自定义约束 `genie_tts_speak` 何时可调用的 Prompt。支持 `{character}` 与 `{emotions}` 占位符；插件还会根据“外语TTS准备方式”自动补充：工具里该传原文，还是传翻译后的文本。 | (见默认值) |
 | **AstrBot Provider** | 在 `provider_translation` 模式下优先用于翻译；自动情感识别模式下也会让它一起返回情感名。 | `openai_provider` |
 | **Provider 翻译提示词** | 仅在 `provider_translation` 模式下生效，用于普通翻译场景。 | (见默认值) |
 

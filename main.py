@@ -22,7 +22,7 @@ from .external_apis import translate_text
     "astrbot_plugin_genie_tts_llm",
     "Whereis-Alice",
     "一个通过 LLM、翻译和 Genie TTS 实现语音合成的插件，支持主动语音工具",
-    "1.6.3",
+    "1.6.4",
     "https://github.com/Whereis-Alice/astrbot_plugin_genie_tts_llm",
 )
 class GenieTtsLlmPlugin(Star):
@@ -987,24 +987,40 @@ class GenieTtsLlmPlugin(Star):
             return None
 
         prompt_template = settings.get("llm_tts_tool_prompt", "")
-        prompt = str(prompt_template).strip()
-        if not prompt:
-            return None
-
-        runtime_lines = []
         char_name = None
         if session_id:
             char_name, _, _ = self._resolve_tts_profile(session_id)
         if not char_name:
             char_name = self.config.get("default_character")
+
+        emotions = []
         if char_name and self.emotion_manager.character_exists(char_name):
             emotions = list(self.emotion_manager.emotions_data.get(char_name, {}).keys())
-            if emotions:
-                runtime_lines.append(
-                    f"当前语音角色是 {char_name}，可用情感有：{', '.join(emotions)}。"
-                    "调用 genie_tts_speak 时，请根据要朗读内容选择一个最贴切的情感填入 emotion_name；"
-                    "不要总是留空使用默认情感。"
-                )
+
+        prompt_template = str(prompt_template).strip()
+        if not prompt_template:
+            return None
+
+        emotions_text = ", ".join(emotions)
+        try:
+            prompt = prompt_template.format(
+                character=char_name or "",
+                emotions=emotions_text,
+            )
+        except (KeyError, IndexError, ValueError):
+            prompt = prompt_template
+
+        prompt = prompt.strip()
+        if not prompt:
+            return None
+
+        runtime_lines = []
+        if emotions and "{emotions}" not in prompt_template:
+            runtime_lines.append(
+                f"当前语音角色是 {char_name}，可用情感有：{emotions_text}。"
+                "调用 genie_tts_speak 时，请根据要朗读内容选择一个最贴切的情感填入 emotion_name；"
+                "不要总是留空使用默认情感。"
+            )
 
         if self.config.get("enable_translation", True):
             target_language_name = self._get_tts_target_language_name()
@@ -1066,6 +1082,10 @@ class GenieTtsLlmPlugin(Star):
         )
 
         if not is_active:
+            tool_prompt = self._build_llm_tool_prompt(session_id)
+            if tool_prompt:
+                req.system_prompt += f"\n\n{tool_prompt}"
+                logger.info(f"[{session_id}] 已注入LLM语音工具提示。")
             return
 
         settings = self.config.get("llm_injection_settings", {})
