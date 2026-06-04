@@ -22,7 +22,7 @@ from .external_apis import translate_text
     "astrbot_plugin_genie_tts_llm",
     "Whereis-Alice",
     "一个通过 LLM、翻译和 Genie TTS 实现语音合成的插件，支持主动语音工具",
-    "1.6.5",
+    "1.6.6",
     "https://github.com/Whereis-Alice/astrbot_plugin_genie_tts_llm",
 )
 class GenieTtsLlmPlugin(Star):
@@ -37,6 +37,8 @@ class GenieTtsLlmPlugin(Star):
         self.session_w_settings: Dict[str, Dict[str, str]] = {}
         self.last_tts_trigger_at: Dict[str, float] = {}
         self.skip_next_auto_tts_sessions: Set[str] = set()
+        self.pending_auto_tts_sessions: Set[str] = set()
+        self.checked_auto_tts_sessions: Set[str] = set()
         self._keepalive_stop_event = asyncio.Event()
         self._keepalive_task: Optional[asyncio.Task] = None
         self._llm_translation_conflict_logged = False
@@ -227,6 +229,71 @@ class GenieTtsLlmPlugin(Star):
         display_text = working_text or tagged_translation or ""
         display_text = re.sub(r"\s+", " ", display_text).strip()
         return display_text, tagged_emotion, tagged_translation
+
+    def _strip_llm_tts_directives(
+        self, text: str, strip_translation: bool = True, strip_emotion: bool = True
+    ) -> Tuple[str, Optional[str], Optional[str], bool]:
+        """Remove hidden TTS directives from text before it reaches chat."""
+        working_text = (text or "").strip()
+        if not working_text:
+            return "", None, None, False
+
+        changed = False
+        tagged_emotion = None
+        tagged_translation = None
+
+        if strip_emotion:
+            emotion_matches = re.findall(r"\[emotion=(.*?)\]", working_text)
+            if emotion_matches:
+                tagged_emotion = emotion_matches[-1].strip()
+                working_text = re.sub(
+                    r"\s*\[emotion=.*?\]\s*", " ", working_text
+                ).strip()
+                changed = True
+
+        if strip_translation:
+            while True:
+                translation_match = re.search(
+                    r"\s*(?:\$(.+?)\$|\uFF04(.+?)\uFF04)\s*$",
+                    working_text,
+                    re.DOTALL,
+                )
+                if not translation_match:
+                    break
+                tagged_translation = (
+                    translation_match.group(1)
+                    or translation_match.group(2)
+                    or ""
+                ).strip()
+                working_text = working_text[: translation_match.start()].strip()
+                changed = True
+
+        cleaned_text = re.sub(r"[ \t]+", " ", working_text)
+        cleaned_text = re.sub(r"\n{3,}", "\n\n", cleaned_text).strip()
+        return cleaned_text, tagged_emotion, tagged_translation, changed
+
+    def _sanitize_plain_components(
+        self, chain: Optional[list], strip_translation: Optional[bool] = None
+    ) -> bool:
+        if not chain:
+            return False
+
+        if strip_translation is None:
+            strip_translation = self._should_inject_llm_translation_tags()
+
+        changed = False
+        for component in chain:
+            if not isinstance(component, Comp.Plain):
+                continue
+            cleaned_text, _, _, component_changed = self._strip_llm_tts_directives(
+                getattr(component, "text", ""),
+                strip_translation=strip_translation,
+                strip_emotion=True,
+            )
+            if component_changed:
+                component.text = cleaned_text
+                changed = True
+        return changed
 
     def _should_use_astrbot_provider_translation(
         self, disable_when_llm_translation_enabled: bool = False
@@ -1015,11 +1082,11 @@ class GenieTtsLlmPlugin(Star):
             return None
 
         runtime_lines = []
-        if emotions and "{emotions}" not in prompt_template:
+        if emotions:
             runtime_lines.append(
-                f"当前语音角色是 {char_name}，可用情感有：{emotions_text}。"
-                "调用 genie_tts_speak 时，请根据要朗读内容选择一个最贴切的情感填入 emotion_name；"
-                "不要总是留空使用默认情感。"
+                f"genie_tts_speak 当前可用情感：{emotions_text}。"
+                "调用工具时必须优先根据朗读内容选择最贴切的 emotion_name；"
+                "只有完全无法判断时才允许留空使用默认情感。"
             )
 
         if self.config.get("enable_translation", True):
@@ -1089,8 +1156,19 @@ class GenieTtsLlmPlugin(Star):
             return
 
         settings = self.config.get("llm_injection_settings", {})
-        enable_emotion = self._should_inject_llm_emotion_tags()
-        enable_translation = self._should_inject_llm_translation_tags()
+        auto_tts_this_turn = self._should_generate_tts_now(session_id)
+        self.checked_auto_tts_sessions.add(session_id)
+        if auto_tts_this_turn:
+            self.pending_auto_tts_sessions.add(session_id)
+        else:
+            self.pending_auto_tts_sessions.discard(session_id)
+
+        enable_emotion = (
+            auto_tts_this_turn and self._should_inject_llm_emotion_tags()
+        )
+        enable_translation = (
+            auto_tts_this_turn and self._should_inject_llm_translation_tags()
+        )
         tool_prompt = self._build_llm_tool_prompt(session_id)
 
         if not enable_emotion and not enable_translation and not tool_prompt:
@@ -1138,7 +1216,8 @@ class GenieTtsLlmPlugin(Star):
             req.system_prompt += f"\n\n{final_prompt}"
             logger.info(
                 f"[{session_id}] 已注入LLM提示词 "
-                f"(Emotion: {enable_emotion}, Trans: {enable_translation}, Tool: {bool(tool_prompt)})"
+                f"(AutoTTS: {auto_tts_this_turn}, Emotion: {enable_emotion}, "
+                f"Trans: {enable_translation}, Tool: {bool(tool_prompt)})"
             )
 
     @filter.on_llm_response()
@@ -1160,6 +1239,19 @@ class GenieTtsLlmPlugin(Star):
         original_text = original_text.replace("(TTS合成失败)", "")
         original_text = original_text.replace("(TTS失败: 角色", "")  # 模糊匹配
 
+        configured_llm_emotion = self._should_inject_llm_emotion_tags()
+        configured_llm_translation = self._should_inject_llm_translation_tags()
+        original_text, injected_emotion, injected_translation, stripped_directives = (
+            self._strip_llm_tts_directives(
+                original_text,
+                strip_translation=configured_llm_translation,
+                strip_emotion=configured_llm_emotion or "[emotion=" in original_text,
+            )
+        )
+        if stripped_directives:
+            resp.completion_text = original_text.strip()
+            resp.result_chain.chain = [Comp.Plain(resp.completion_text)]
+
         # 检查是否开启了TTS (个人会话 或 群组)
         is_group_tts_active = self._is_group_tts_active(group_id)
         is_active = (
@@ -1172,31 +1264,9 @@ class GenieTtsLlmPlugin(Star):
             return
 
         settings = self.config.get("llm_injection_settings", {})
-        enable_llm_emotion = self._should_inject_llm_emotion_tags()
-        enable_llm_translation = self._should_inject_llm_translation_tags()
+        enable_llm_emotion = configured_llm_emotion
+        enable_llm_translation = configured_llm_translation
         translation_workflow = self._get_translation_workflow()
-
-        # 1. 提取情感标签 [emotion=xxx]
-        emotion_match = re.search(r"\[emotion=(.*?)\]", original_text)
-        injected_emotion = None
-        if emotion_match:
-            injected_emotion = emotion_match.group(1).strip()
-            # 从原文中移除标签，保持回复干净
-            original_text = original_text.replace(emotion_match.group(0), "")
-
-        injected_translation = None
-        # 2. 提取翻译内容（仅在开启 LLM 翻译注入时处理）
-        # 仅匹配显式标记，避免误删普通文本中的反斜杠/金额符号等内容。
-        if enable_llm_translation:
-            translation_match = re.search(
-                r"(?:\$(.+?)\$|\uFF04(.+?)\uFF04)\s*$", original_text, re.DOTALL
-            )
-            if translation_match:
-                injected_translation = (
-                    translation_match.group(1) or translation_match.group(2) or ""
-                ).strip()
-                # 从原文中移除翻译，保持回复干净
-                original_text = original_text.replace(translation_match.group(0), "", 1)
 
         # 更新 LLM 回复文本为净化后的文本 (去除标签和翻译部分)
         resp.completion_text = original_text.strip()
@@ -1207,10 +1277,19 @@ class GenieTtsLlmPlugin(Star):
 
         if session_id in self.skip_next_auto_tts_sessions:
             self.skip_next_auto_tts_sessions.discard(session_id)
+            self.pending_auto_tts_sessions.discard(session_id)
+            self.checked_auto_tts_sessions.discard(session_id)
             logger.info(f"[{session_id}] 已由 LLM 主动语音工具发送语音，跳过本次自动 TTS。")
             return
 
-        if not self._should_generate_tts_now(session_id):
+        if session_id in self.checked_auto_tts_sessions:
+            should_generate_auto_tts = session_id in self.pending_auto_tts_sessions
+        else:
+            should_generate_auto_tts = self._should_generate_tts_now(session_id)
+        self.pending_auto_tts_sessions.discard(session_id)
+        self.checked_auto_tts_sessions.discard(session_id)
+
+        if not should_generate_auto_tts:
             return
 
         # --- 开始 TTS 处理流程 ---
@@ -1368,6 +1447,19 @@ class GenieTtsLlmPlugin(Star):
             )
         else:
             resp.result_chain.chain.append(Comp.Plain("\n(TTS合成失败)"))
+
+    @filter.on_decorating_result()
+    async def sanitize_tts_directives_before_send(self, event: AstrMessageEvent):
+        """Final guard to keep internal TTS directives out of visible chat."""
+        result = event.get_result()
+        chain = getattr(result, "chain", None) if result else None
+        if not chain:
+            return
+
+        if self._sanitize_plain_components(chain):
+            result.chain = chain
+            event.set_result(result)
+            logger.info(f"[{event.unified_msg_origin}] 已清理残留的TTS内部标签。")
 
     async def terminate(self):
         """插件卸载/停用时关闭http客户端"""

@@ -225,7 +225,7 @@
       "translation_workflow": {
         "title": "外语TTS准备方式",
         "description": "翻译链路二选一",
-        "hint": "llm_injection=主 LLM 在回复末尾直接给出 $翻译$，自动情感模式下也可附带 [emotion=xxx]；provider_translation=不注入翻译标签，改由下方 AstrBot Provider 或外部翻译 API 负责翻译。这个选择也会同步影响 genie_tts_speak 工具。",
+        "hint": "llm_injection=仅在本轮自动 TTS 确实触发时，要求主 LLM 在回复末尾给出 $翻译$，自动情感模式下也可附带 [emotion=xxx]；provider_translation=不注入翻译标签，改由下方 AstrBot Provider 或外部翻译 API 负责翻译。这个选择也会同步影响 genie_tts_speak 工具。",
         "type": "string",
         "default": "llm_injection",
         "options": [
@@ -258,7 +258,7 @@
       "llm_translation_prompt": {
         "title": "翻译注入提示词",
         "description": "翻译 Prompt",
-        "hint": "仅在“外语TTS准备方式=llm_injection”时生效。用于要求主 LLM 直接给出可用于 TTS 的翻译文本。",
+        "hint": "仅在“外语TTS准备方式=llm_injection”且本轮自动 TTS 触发时生效。用于要求主 LLM 直接给出可用于 TTS 的翻译文本。",
         "type": "text",
         "default": "# 翻译\n你必须在回复末尾用 $...$ 符号包裹对应的日语翻译。\n例：今天天气不错 $今日はいい天気ですね$"
       },
@@ -272,9 +272,9 @@
       "llm_tts_tool_prompt": {
         "title": "语音工具提示词",
         "description": "工具调用 Prompt",
-        "hint": "用于约束主 LLM 何时调用 genie_tts_speak。支持 {character} 和 {emotions} 占位符；插件还会根据上方的“外语TTS准备方式”自动补充“工具里应传原文还是翻译后文本”的运行时提示。",
+        "hint": "用于约束主 LLM 何时调用 genie_tts_speak。支持 {character} 和 {emotions} 占位符；插件还会自动补充当前可用情感和文本准备方式，要求 LLM 调用工具时优先填写 emotion_name。",
         "type": "text",
-        "default": "# 语音工具\n当且仅当用户明确要求你直接发一条语音、说一句给他听、念一段内容、试听声音时，你可以调用 genie_tts_speak 工具。\n普通闲聊时不要调用这个工具，也不要因为用户只是提到声音、角色、语音功能就主动调用。\n当前语音角色: {character}\n可用情感: {emotions}\n调用时请传入适合直接朗读的完整句子，并保留句末标点；请根据要朗读内容从可用情感中选择合适的 emotion_name，不要总是留空使用默认情感。"
+        "default": "# 语音工具\n当且仅当用户明确要求你直接发一条语音、说一句给他听、念一段内容、试听声音时，你可以调用 genie_tts_speak 工具。\n普通闲聊时不要调用这个工具，也不要因为用户只是提到声音、角色、语音功能就主动调用。\n当前语音角色: {character}\n可用情感: {emotions}\n调用时请传入适合直接朗读的完整句子，并保留句末标点；必须根据朗读内容从可用情感中选择最贴切的 emotion_name，只有完全无法判断时才允许留空使用默认情感。"
       },
       "use_astrbot_provider": {
         "title": "使用 AstrBot Provider",
