@@ -22,7 +22,7 @@ from .external_apis import translate_text
     "astrbot_plugin_genie_tts_llm",
     "Whereis-Alice",
     "一个通过 LLM、翻译和 Genie TTS 实现语音合成的插件，支持主动语音工具",
-    "1.6.6",
+    "1.6.7",
     "https://github.com/Whereis-Alice/astrbot_plugin_genie_tts_llm",
 )
 class GenieTtsLlmPlugin(Star):
@@ -1363,6 +1363,12 @@ class GenieTtsLlmPlugin(Star):
         self._log_translation_result(session_id, original_text, target_text)
 
         if not target_text:
+            if translation_workflow == "llm_injection":
+                logger.warning(
+                    f"[{session_id}] 本轮自动TTS已触发，但主LLM没有返回 $...$ 翻译标签，"
+                    "已跳过语音合成并保留原文本回复。"
+                )
+                return
             resp.result_chain.chain.append(Comp.Plain("\n(TTS失败: 翻译无结果)"))
             return
 
