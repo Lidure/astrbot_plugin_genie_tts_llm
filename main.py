@@ -22,7 +22,7 @@ from .external_apis import translate_text
     "astrbot_plugin_genie_tts_llm",
     "Whereis-Alice",
     "一个通过 LLM、翻译和 Genie TTS 实现语音合成的插件，支持主动语音工具",
-    "1.7.0",
+    "1.7.1",
     "https://github.com/Whereis-Alice/astrbot_plugin_genie_tts_llm",
 )
 class GenieTtsLlmPlugin(Star):
@@ -189,14 +189,13 @@ class GenieTtsLlmPlugin(Star):
         return self._get_translation_workflow() == "llm_injection"
 
     def _should_inject_llm_emotion_tags(self) -> bool:
+        """情感标签与翻译链路解耦，只受“生成情感标签”开关控制。
+
+        [emotion=xxx] 与 $翻译$ 是两件独立的事：provider_translation 链路下，
+        情感标签会在文本送去翻译之前先被剥离，既不会污染翻译输入，也不会漏进聊天。
+        """
         settings = self.config.get("llm_injection_settings", {})
-        if not settings.get("enable_llm_emotion", False):
-            return False
-
-        if not self.config.get("enable_translation", True):
-            return True
-
-        return self._get_translation_workflow() == "llm_injection"
+        return bool(settings.get("enable_llm_emotion", False))
 
     def _get_tts_target_language_name(self) -> str:
         language_code = str(self.config.get("tts_default_language", "jp") or "jp").strip().lower()
@@ -983,10 +982,13 @@ class GenieTtsLlmPlugin(Star):
     ) -> Optional[str]:
         settings = self.config.get("llm_injection_settings", {})
         target_text = None
-        translation_prompt = settings.get(
-            "translation_prompt",
-            "Translate the following text to Japanese. Output only the translation, nothing else.",
-        )
+        translation_prompt = str(settings.get("translation_prompt", "") or "").strip()
+        if not translation_prompt:
+            target_language_name = self._get_tts_target_language_name()
+            translation_prompt = (
+                f"请把以下文本翻译成{target_language_name}，保留原文的语气和句末标点，"
+                "只输出译文，不要输出解释、引号或原文。"
+            )
 
         if self._should_use_astrbot_provider_translation(
             disable_when_llm_translation_enabled=disable_provider_during_llm_translation
