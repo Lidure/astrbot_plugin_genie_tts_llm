@@ -1,5 +1,11 @@
 # 更新日志
 
+## v1.7.1
+
+- **[修复] provider_translation 链路下不注入情感标签**：此前只要开着翻译且“外语TTS准备方式=provider_translation”，即使打开“生成情感标签”也不会注入 `[emotion=xxx]` 提示词，导致自动语音永远落到会话固定/默认情感。现在情感标签与翻译链路彻底解耦，只由“生成情感标签”开关控制；provider 链路会先剥离标签，再把净化后的原文交给翻译 Provider，不会污染翻译输入也不会漏进聊天。
+- **[改进] 翻译系统提示词留空兜底**：`translation_prompt` 被清空时不再发送空系统提示词，而是按“TTS目标语言”自动生成中文提示词（保留语气与句末标点、只输出译文）。
+- **[文档] 配置项说明修正**：`translation_workflow`、`enable_llm_emotion`、`translation_prompt` 的 hint 同步为新行为。
+
 ## v1.7.0
 
 - **[新增] 语音停顿控制与自定义 `[pause=ms]` 标记**：上调 Space 端句间 / 省略号停顿时长（可用环境变量 `GENIE_SENTENCE_PAUSE_MS`、`GENIE_ELLIPSIS_PAUSE_MS`、`GENIE_MAX_PAUSE_MS` 调整）；新增“自定义停顿标记”开关，开启后可在朗读文本中用 `[pause=600]` 精确插入静音，关闭时会自动清除标记且不朗读。
