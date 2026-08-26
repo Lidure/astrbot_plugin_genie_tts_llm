@@ -22,7 +22,7 @@ from .external_apis import translate_text
     "astrbot_plugin_genie_tts_llm",
     "Whereis-Alice",
     "一个通过 LLM、翻译和 Genie TTS 实现语音合成的插件，支持主动语音工具",
-    "1.6.7",
+    "1.7.0",
     "https://github.com/Whereis-Alice/astrbot_plugin_genie_tts_llm",
 )
 class GenieTtsLlmPlugin(Star):
@@ -230,8 +230,22 @@ class GenieTtsLlmPlugin(Star):
         display_text = re.sub(r"\s+", " ", display_text).strip()
         return display_text, tagged_emotion, tagged_translation
 
+    def _strip_pause_markers(self, text: str) -> str:
+        """移除自定义停顿标记 [pause=ms]，避免它出现在用户可见的聊天文本里。"""
+        if not text:
+            return text
+        stripped = re.sub(
+            r"\[pause\s*=\s*\d+\s*(?:ms)?\]", " ", text, flags=re.IGNORECASE
+        )
+        stripped = re.sub(r"[ \t]{2,}", " ", stripped)
+        return stripped.strip()
+
     def _strip_llm_tts_directives(
-        self, text: str, strip_translation: bool = True, strip_emotion: bool = True
+        self,
+        text: str,
+        strip_translation: bool = True,
+        strip_emotion: bool = True,
+        strip_pause: bool = False,
     ) -> Tuple[str, Optional[str], Optional[str], bool]:
         """Remove hidden TTS directives from text before it reaches chat."""
         working_text = (text or "").strip()
@@ -268,6 +282,12 @@ class GenieTtsLlmPlugin(Star):
                 working_text = working_text[: translation_match.start()].strip()
                 changed = True
 
+        if strip_pause:
+            pause_stripped = self._strip_pause_markers(working_text)
+            if pause_stripped != working_text:
+                working_text = pause_stripped
+                changed = True
+
         cleaned_text = re.sub(r"[ \t]+", " ", working_text)
         cleaned_text = re.sub(r"\n{3,}", "\n\n", cleaned_text).strip()
         return cleaned_text, tagged_emotion, tagged_translation, changed
@@ -289,6 +309,7 @@ class GenieTtsLlmPlugin(Star):
                 getattr(component, "text", ""),
                 strip_translation=strip_translation,
                 strip_emotion=True,
+                strip_pause=True,
             )
             if component_changed:
                 component.text = cleaned_text
@@ -415,6 +436,7 @@ class GenieTtsLlmPlugin(Star):
         )
 
     async def _send_text_message(self, session_id: str, text: str) -> bool:
+        text = self._strip_pause_markers(text)
         return await self.context.send_message(
             session_id, MessageChain(chain=[Comp.Plain(text)])
         )
@@ -1109,6 +1131,15 @@ class GenieTtsLlmPlugin(Star):
 
         return "\n".join([prompt, *runtime_lines]).strip()
 
+    def _build_pause_prompt(self) -> Optional[str]:
+        """自定义停顿标记开启时，返回要注入给 LLM 的提示词；关闭时返回 None。"""
+        if not self.config.get("enable_custom_pause_marker", False):
+            return None
+        prompt = self.config.get("custom_pause_prompt", "")
+        if isinstance(prompt, str):
+            prompt = prompt.strip()
+        return prompt or None
+
     async def _synthesize_speech_from_context(
         self, text: str, session_id: str
     ) -> Optional[str]:
@@ -1151,6 +1182,9 @@ class GenieTtsLlmPlugin(Star):
         if not is_active:
             tool_prompt = self._build_llm_tool_prompt(session_id)
             if tool_prompt:
+                pause_prompt = self._build_pause_prompt()
+                if pause_prompt:
+                    tool_prompt = f"{tool_prompt}\n\n{pause_prompt}"
                 req.system_prompt += f"\n\n{tool_prompt}"
                 logger.info(f"[{session_id}] 已注入LLM语音工具提示。")
             return
@@ -1202,6 +1236,12 @@ class GenieTtsLlmPlugin(Star):
                 except KeyError:
                     emotion_prompt = prompt_template
                 prompts_to_inject.append(emotion_prompt)
+            else:
+                logger.warning(
+                    f"[{session_id}] 情感注入被跳过：角色 '{char_name}' 未注册任何情感，"
+                    "本轮不会要求 LLM 输出 [emotion=xxx] 标签，自动TTS将回落默认情感。"
+                    "可用 /注册感情 为该角色注册情感。"
+                )
 
         if enable_translation:
             trans_prompt = settings.get("llm_translation_prompt", "")
@@ -1211,13 +1251,19 @@ class GenieTtsLlmPlugin(Star):
         if tool_prompt:
             prompts_to_inject.append(tool_prompt)
 
+        pause_prompt = self._build_pause_prompt()
+        pause_injected = bool(pause_prompt) and (enable_translation or bool(tool_prompt))
+        if pause_injected:
+            prompts_to_inject.append(pause_prompt)
+
         if prompts_to_inject:
             final_prompt = "\n\n".join(prompts_to_inject)
             req.system_prompt += f"\n\n{final_prompt}"
             logger.info(
                 f"[{session_id}] 已注入LLM提示词 "
                 f"(AutoTTS: {auto_tts_this_turn}, Emotion: {enable_emotion}, "
-                f"Trans: {enable_translation}, Tool: {bool(tool_prompt)})"
+                f"Trans: {enable_translation}, Tool: {bool(tool_prompt)}, "
+                f"Pause: {pause_injected})"
             )
 
     @filter.on_llm_response()
@@ -1332,6 +1378,11 @@ class GenieTtsLlmPlugin(Star):
         if enable_llm_emotion and injected_emotion:
             target_emotion = injected_emotion
             emotion_source = "LLM情感标签"
+        elif enable_llm_emotion and not injected_emotion:
+            logger.info(
+                f"[{session_id}] 已开启LLM情感标签，但本轮回复未解析到 [emotion=xxx]，"
+                "将使用会话固定/默认情感。请确认角色已注册情感、且情感提示词包含 {emotions} 占位符。"
+            )
 
         # 确定翻译文本
         if enable_llm_translation and injected_translation:
