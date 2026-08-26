@@ -87,6 +87,31 @@ class TTSEngine:
             return f"{text[:insert_at]}{punctuation}{text[insert_at:]}"
         return f"{text}{punctuation}"
 
+    def _truncate_text_for_tts(self, text: str, max_length: int) -> str:
+        """将过长文本按句子边界截断，避免超长回复被切成过多块、长时间排队等待。
+
+        仅影响送入 TTS 的音频文本；audio_and_text 模式下展示给用户的文字仍是完整原文。
+        """
+        text = (text or "").strip()
+        if max_length <= 0 or len(text) <= max_length:
+            return text
+
+        window = text[:max_length]
+        boundary_chars = "。！？!?…．.、，,；;\n"
+        cut_at = -1
+        for idx in range(len(window) - 1, -1, -1):
+            if window[idx] in boundary_chars:
+                cut_at = idx + 1
+                break
+
+        # 边界过于靠前会丢掉太多内容，此时退回硬截断，至少保留一半长度。
+        if cut_at >= max(1, max_length // 2):
+            truncated = window[:cut_at]
+        else:
+            truncated = window
+
+        return truncated.strip()
+
     async def _cleanup_loop(self):
         """定期清理过期的临时音频文件"""
         while True:
@@ -256,16 +281,21 @@ class TTSEngine:
                     "language": language,
                 }
                 tts_timeout = self.config.get("tts_timeout_seconds", 120)
+                ref_start = time.perf_counter()
                 response = await self.http_client.post(
                     f"{server_url}/set_reference_audio", json=ref_payload, timeout=60
                 )
                 response.raise_for_status()
+                ref_elapsed = time.perf_counter() - ref_start
 
                 tts_payload = {
                     "character_name": character_name,
                     "text": text,
                     "split_sentence": True,
                 }
+                tts_start = time.perf_counter()
+                first_byte_elapsed = None
+                total_audio_bytes = 0
                 async with self.http_client.stream(
                     "POST", f"{server_url}/tts", json=tts_payload, timeout=tts_timeout
                 ) as response_tts:
@@ -276,7 +306,25 @@ class TTSEngine:
                         wf.setsampwidth(BYTES_PER_SAMPLE)
                         wf.setframerate(SAMPLE_RATE)
                         async for chunk in response_tts.aiter_bytes():
+                            if chunk:
+                                if first_byte_elapsed is None:
+                                    first_byte_elapsed = time.perf_counter() - tts_start
+                                total_audio_bytes += len(chunk)
                             wf.writeframes(chunk)
+                    total_elapsed = time.perf_counter() - tts_start
+                    audio_seconds = total_audio_bytes / float(
+                        SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE
+                    )
+                    ttfb_text = (
+                        f"{first_byte_elapsed:.2f}s"
+                        if first_byte_elapsed is not None
+                        else "无音频"
+                    )
+                    logger.info(
+                        f"[{session_id_for_log}] TTS服务器 {server_url} 计时 | "
+                        f"参考音频设定 {ref_elapsed:.2f}s | 首包响应 {ttfb_text} | "
+                        f"合成传输 {total_elapsed:.2f}s | 音频时长 {audio_seconds:.2f}s"
+                    )
                     return str(output_path)
             except Exception as e:
                 logger.warning(
@@ -402,17 +450,48 @@ class TTSEngine:
                 return None
 
             text_for_tts = text
+
+            # 自定义停顿标记 [pause=ms]：开启则保留，交由 Space 精确插入静音；
+            # 关闭则在送入 TTS 前剥除，避免把标记本身朗读出来。
+            if not self.config.get("enable_custom_pause_marker", False):
+                stripped_pause = re.sub(
+                    r"\[pause\s*=\s*\d+\s*(?:ms)?\]",
+                    " ",
+                    text_for_tts,
+                    flags=re.IGNORECASE,
+                )
+                stripped_pause = re.sub(r"\s+", " ", stripped_pause).strip()
+                if stripped_pause != text_for_tts:
+                    text_for_tts = stripped_pause
+
             if self.config.get("enable_tts_text_cleaning", False):
-                text_for_tts = self._clean_text_for_tts(text)
-                if text_for_tts != text:
+                cleaned_text = self._clean_text_for_tts(text_for_tts)
+                if cleaned_text != text_for_tts:
                     logger.info(
-                        f"[{session_id_for_log}] TTS文本已清洗: '{text[:30]}' -> '{text_for_tts[:30]}'"
+                        f"[{session_id_for_log}] TTS文本已清洗: '{text_for_tts[:30]}' -> '{cleaned_text[:30]}'"
                     )
+                text_for_tts = cleaned_text
                 if not text_for_tts:
                     logger.warning(
                         f"[{session_id_for_log}] TTS文本清洗后为空，跳过合成。"
                     )
                     return None
+
+            max_text_length = self.config.get("tts_max_text_length", 150)
+            try:
+                max_text_length = int(max_text_length)
+            except (TypeError, ValueError):
+                max_text_length = 150
+            if max_text_length > 0 and len(text_for_tts) > max_text_length:
+                truncated_text = self._truncate_text_for_tts(
+                    text_for_tts, max_text_length
+                )
+                if truncated_text and truncated_text != text_for_tts:
+                    logger.info(
+                        f"[{session_id_for_log}] TTS文本超过长度上限({max_text_length})，"
+                        f"已截断: {len(text_for_tts)} -> {len(truncated_text)} 字符。"
+                    )
+                    text_for_tts = truncated_text
 
             punctuated_text = self._ensure_terminal_punctuation(text_for_tts, language)
             if punctuated_text != text_for_tts:
