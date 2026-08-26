@@ -209,6 +209,27 @@
     "type": "string",
     "default": "([。、，！？,.!?])"
   },
+  "tts_max_text_length": {
+    "title": "语音文本长度上限",
+    "description": "过长截断",
+    "hint": "只对送入 TTS 的音频文本生效：超过该字符数会优先在句子边界截断，避免超长回复被切成大量分块导致长时间排队。0 表示不限制；audio_and_text 模式下展示给用户的文字仍是完整原文，不受影响。建议 120-200。",
+    "type": "int",
+    "default": 150
+  },
+  "enable_custom_pause_marker": {
+    "title": "自定义停顿标记",
+    "description": "[pause=毫秒]",
+    "hint": "开启后可在朗读文本中插入形如 [pause=600] 的标记来精确控制停顿（单位毫秒），Space 端会在该处插入静音、标记本身不会被读出；关闭时这些标记会被自动清除，不影响正常文本。单个停顿上限由 Space 的 GENIE_MAX_PAUSE_MS 决定（默认 3000）。",
+    "type": "bool",
+    "default": false
+  },
+  "custom_pause_prompt": {
+    "title": "停顿标记提示词",
+    "description": "注入说明",
+    "hint": "仅当“自定义停顿标记”开启、且本轮确实注入了 LLM 提示词（自动TTS触发或工具调用）时才追加，用于告知 LLM 如何使用 [pause=毫秒] 标记；留空则不追加。",
+    "type": "string",
+    "default": "如需更自然的停顿，可在要朗读的句子中插入形如 [pause=600] 的标记（单位毫秒，最多 3000），合成时会在该处停顿相应时长，标记本身不会被读出。例如：$今日は[pause=600]またね$"
+  },
   "tts_max_retries": {
     "title": "TTS 最大重试次数",
     "description": "失败重试",
