@@ -73,6 +73,12 @@ class PrivateTtsAndRoleDefaultsTests(unittest.TestCase):
             "开心",
         )
 
+    def test_schema_defaults_all_private_chats_to_tts_enabled(self):
+        schema = json.loads(Path("_conf_schema.json").read_text(encoding="utf-8"))
+        self.assertTrue(schema["enable_private_tts_by_default"]["default"])
+        source = Path("main.py").read_text(encoding="utf-8")
+        self.assertIn('self.config.get("enable_private_tts_by_default", True)', source)
+
     def test_schema_and_main_wire_private_default_and_role_emotion_resolution(self):
         schema = json.loads(Path("_conf_schema.json").read_text(encoding="utf-8"))
         self.assertIn("enable_private_tts_by_default", schema)
