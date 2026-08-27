@@ -1,0 +1,99 @@
+name: apply minimal ModelScope auth patch
+
+on:
+  push:
+    branches:
+      - fix/modelscope-genie-auth
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[modelscope-auth-applied]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/modelscope-genie-auth
+      - name: Patch only Genie auth and schema
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          engine = Path('tts_engine.py')
+          text = engine.read_text(encoding='utf-8')
+
+          import_anchor = 'from typing import Optional, Dict\n'
+          import_line = 'from urllib.parse import urlparse\n'
+          if import_line not in text:
+              if import_anchor not in text:
+                  raise SystemExit('typing import anchor not found')
+              text = text.replace(import_anchor, import_anchor + import_line, 1)
+
+          class_anchor = '\n\nclass TTSEngine:\n'
+          helper = '''\n\ndef _build_modelscope_auth_headers(server_url: str, config) -> dict:\n    """Return Bearer auth only for ModelScope dedicated inference hosts."""\n    token = str(\n        config.get("modelscope_api_token", "")\n        or os.getenv("MODELSCOPE_API_TOKEN", "")\n        or ""\n    ).strip()\n    if not token:\n        return {}\n\n    hostname = (urlparse(server_url).hostname or "").lower()\n    if hostname == "api-inference.modelscope.net" or hostname.endswith(\n        ".api-inference.modelscope.net"\n    ):\n        return {"Authorization": f"Bearer {token}"}\n    return {}\n'''
+          if '_build_modelscope_auth_headers' not in text:
+              if class_anchor not in text:
+                  raise SystemExit('TTSEngine class anchor not found')
+              text = text.replace(class_anchor, helper + class_anchor, 1)
+
+          language_anchor = '''                if not language:\n                    language = self.config.get("tts_default_language", "jp")\n\n'''
+          auth_line = '                auth_headers = _build_modelscope_auth_headers(server_url, self.config)\n\n'
+          if auth_line not in text:
+              if language_anchor not in text:
+                  raise SystemExit('language anchor not found')
+              text = text.replace(language_anchor, language_anchor + auth_line, 1)
+
+          old_ref = '                    f"{server_url}/set_reference_audio", json=ref_payload, timeout=60\n'
+          new_ref = '                    f"{server_url}/set_reference_audio", json=ref_payload, headers=auth_headers, timeout=60\n'
+          if new_ref not in text:
+              if old_ref not in text:
+                  raise SystemExit('set_reference_audio call anchor not found')
+              text = text.replace(old_ref, new_ref, 1)
+
+          old_tts = '                    "POST", f"{server_url}/tts", json=tts_payload, timeout=tts_timeout\n'
+          new_tts = '                    "POST", f"{server_url}/tts", json=tts_payload, headers=auth_headers, timeout=tts_timeout\n'
+          if new_tts not in text:
+              if old_tts not in text:
+                  raise SystemExit('/tts stream call anchor not found')
+              text = text.replace(old_tts, new_tts, 1)
+
+          engine.write_text(text, encoding='utf-8')
+
+          schema = Path('_conf_schema.json')
+          raw = schema.read_bytes()
+          if b'"modelscope_api_token"' not in raw:
+              newline = b'\r\n' if b'\r\n' in raw else b'\n'
+              trailing_newline = raw.endswith((b'\n', b'\r'))
+              body = raw.rstrip(b'\r\n')
+              if not body.endswith(b'}'):
+                  raise SystemExit('schema final object close not found')
+              body = body[:-1].rstrip(b'\r\n')
+              entry_lines = [
+                  b'  "modelscope_api_token": {',
+                  b'    "title": "ModelScope API Token",',
+                  b'    "description": "ModelScope dedicated inference authentication",',
+                  b'    "hint": "Only used for *.api-inference.modelscope.net. You may also set the MODELSCOPE_API_TOKEN environment variable.",',
+                  b'    "type": "string",',
+                  b'    "default": "",',
+                  b'    "obvious_hint": false',
+                  b'  }',
+              ]
+              raw = body + b',' + newline + newline.join(entry_lines) + newline + b'}'
+              if trailing_newline:
+                  raw += newline
+              schema.write_bytes(raw)
+          PY
+
+          python -m unittest discover -s tests -v
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tts_engine.py _conf_schema.json
+          if git diff --cached --quiet; then
+            echo 'Already patched'
+            exit 0
+          fi
+          git commit -m 'fix: add ModelScope Genie bearer auth [modelscope-auth-applied]'
+          git push origin HEAD:fix/modelscope-genie-auth
