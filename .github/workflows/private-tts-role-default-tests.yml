@@ -14,5 +14,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Run private TTS and role default tests
-        run: python -m unittest tests.test_private_tts_and_role_defaults tests.test_emotion_routing tests.test_session_character_bindings -v
+      - name: Run full plugin regression suite
+        run: python -m unittest discover -s tests -v
