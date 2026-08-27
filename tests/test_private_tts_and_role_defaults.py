@@ -98,6 +98,9 @@ class PrivateTtsAndRoleDefaultsTests(unittest.TestCase):
         source = Path("main.py").read_text(encoding="utf-8")
         self.assertIn("self.inactive_private_sessions", source)
         self.assertIn("_is_private_tts_active", source)
+        self.assertGreaterEqual(
+            source.count("self._is_private_tts_active(session_id, group_id)"), 2
+        )
         self.assertIn("_get_default_emotion_for_character", source)
         self.assertIn("enable_private_tts_by_default", source)
         self.assertIn("character_default_emotions", source)
