@@ -7,6 +7,11 @@ from session_character_bindings import SessionCharacterBindings
 
 
 class SessionCharacterBindingsTests(unittest.TestCase):
+    def test_unknown_session_returns_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bindings = SessionCharacterBindings(Path(tmp) / "session_characters.json")
+            self.assertIsNone(bindings.get("missing-session"))
+
     def test_set_persists_and_reload_restores_binding(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "session_characters.json"
