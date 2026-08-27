@@ -16,6 +16,7 @@ from astrbot.api.provider import LLMResponse, ProviderRequest
 from .emotion_manager import EmotionManager
 from .tts_engine import TTSEngine
 from .external_apis import translate_text
+from .session_character_bindings import SessionCharacterBindings
 
 
 @register(
@@ -47,6 +48,9 @@ class GenieTtsLlmPlugin(Star):
         plugin_data_dir = StarTools.get_data_dir("astrbot_plugin_genie_tts_llm")
         emotions_file_path = plugin_data_dir / "emotions.json"
         self.emotion_manager = EmotionManager(emotions_file_path)
+        self.session_character_bindings = SessionCharacterBindings(
+            plugin_data_dir / "session_characters.json"
+        )
 
         self.http_client = httpx.AsyncClient(timeout=300.0)
         self.tts_engine = TTSEngine(self.config, self.http_client, plugin_data_dir)
@@ -795,6 +799,53 @@ class GenieTtsLlmPlugin(Star):
         else:
             yield event.plain_result(f"❌ 未找到角色 '{character_name}'。")
 
+    @filter.command("tts-role", alias={"语音角色"})
+    async def session_character_command(
+        self, event: AstrMessageEvent, character_name: str = ""
+    ):
+        """查看、设置或清除当前会话绑定的 Genie 角色。"""
+        session_id = event.unified_msg_origin
+        character_name = str(character_name or "").strip()
+        default_character = str(self.config.get("default_character") or "").strip()
+
+        if not character_name:
+            bound_character = self.session_character_bindings.get(session_id)
+            if bound_character:
+                yield event.plain_result(
+                    f"当前会话语音角色: {bound_character}（会话绑定）"
+                )
+            else:
+                yield event.plain_result(
+                    f"当前会话未单独绑定语音角色，将使用默认角色: {default_character}"
+                )
+            return
+
+        if character_name.lower() in {"default", "reset"} or character_name in {
+            "默认",
+            "清除",
+            "重置",
+        }:
+            self.session_character_bindings.clear(session_id)
+            logger.info(f"会话 [{session_id}] 已清除语音角色绑定。")
+            yield event.plain_result(
+                f"已清除本会话语音角色绑定，将使用默认角色: {default_character}"
+            )
+            return
+
+        if not self.emotion_manager.character_exists(character_name):
+            yield event.plain_result(
+                f"❌ 未找到角色 '{character_name}'。请先在 emotions.json 中注册该角色。"
+            )
+            return
+
+        self.session_character_bindings.set(session_id, character_name)
+        logger.info(
+            f"会话 [{session_id}] 已绑定 Genie 语音角色: {character_name}"
+        )
+        yield event.plain_result(
+            f"本会话语音角色已绑定为: {character_name}。AstrBot 重启后仍会保留。"
+        )
+
     @filter.llm_tool(name="genie_tts_speak")
     async def llm_tool_genie_tts_speak(
         self,
@@ -942,10 +993,12 @@ class GenieTtsLlmPlugin(Star):
                 resolved_char = session_setting.get("character")
                 if not emotion_name:
                     emotion_name = session_setting.get("emotion")
-            elif session_id in self.w_active_sessions:
-                resolved_char = self.session_w_settings.get(session_id, {}).get(
-                    "character"
-                )
+            else:
+                resolved_char = self.session_character_bindings.get(session_id)
+                if not resolved_char and session_id in self.w_active_sessions:
+                    resolved_char = self.session_w_settings.get(session_id, {}).get(
+                        "character"
+                    )
 
         if not resolved_char:
             resolved_char = self.config.get("default_character")
