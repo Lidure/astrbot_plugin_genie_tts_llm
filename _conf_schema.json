@@ -375,5 +375,13 @@
         "default": "请对以下中文内容进行翻译和情感分析。首先翻译成日语，然后从以下情感列表中选择最合适的一个：{emotion_list}。请按以下格式输出：\n[翻译后的日语文本][选择的情感名]\n\n原文：{text}"
       }
     }
+  },
+  "modelscope_api_token": {
+    "title": "ModelScope API Token",
+    "description": "ModelScope dedicated inference authentication",
+    "hint": "Only used for *.api-inference.modelscope.net. You may also set the MODELSCOPE_API_TOKEN environment variable.",
+    "type": "string",
+    "default": "",
+    "obvious_hint": false
   }
 }

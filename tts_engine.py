@@ -6,6 +6,7 @@ import wave
 import time
 from pathlib import Path
 from typing import Optional, Dict
+from urllib.parse import urlparse
 
 import httpx
 from astrbot.api import logger, AstrBotConfig
@@ -14,6 +15,24 @@ from astrbot.api import logger, AstrBotConfig
 BYTES_PER_SAMPLE = 2
 CHANNELS = 1
 SAMPLE_RATE = 32000
+
+
+def _build_modelscope_auth_headers(server_url: str, config) -> dict:
+    """Return Bearer auth only for ModelScope dedicated inference hosts."""
+    token = str(
+        config.get("modelscope_api_token", "")
+        or os.getenv("MODELSCOPE_API_TOKEN", "")
+        or ""
+    ).strip()
+    if not token:
+        return {}
+
+    hostname = (urlparse(server_url).hostname or "").lower()
+    if hostname == "api-inference.modelscope.net" or hostname.endswith(
+        ".api-inference.modelscope.net"
+    ):
+        return {"Authorization": f"Bearer {token}"}
+    return {}
 
 
 class TTSEngine:
@@ -274,6 +293,8 @@ class TTSEngine:
                 if not language:
                     language = self.config.get("tts_default_language", "jp")
 
+                auth_headers = _build_modelscope_auth_headers(server_url, self.config)
+
                 ref_payload = {
                     "character_name": character_name,
                     "audio_path": ref_audio_path,
@@ -283,7 +304,7 @@ class TTSEngine:
                 tts_timeout = self.config.get("tts_timeout_seconds", 120)
                 ref_start = time.perf_counter()
                 response = await self.http_client.post(
-                    f"{server_url}/set_reference_audio", json=ref_payload, timeout=60
+                    f"{server_url}/set_reference_audio", json=ref_payload, headers=auth_headers, timeout=60
                 )
                 response.raise_for_status()
                 ref_elapsed = time.perf_counter() - ref_start
@@ -297,7 +318,7 @@ class TTSEngine:
                 first_byte_elapsed = None
                 total_audio_bytes = 0
                 async with self.http_client.stream(
-                    "POST", f"{server_url}/tts", json=tts_payload, timeout=tts_timeout
+                    "POST", f"{server_url}/tts", json=tts_payload, headers=auth_headers, timeout=tts_timeout
                 ) as response_tts:
                     response_tts.raise_for_status()
                     output_path = self.temp_audio_dir / f"{uuid.uuid4()}.wav"
