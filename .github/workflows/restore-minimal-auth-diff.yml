@@ -1,0 +1,98 @@
+name: restore minimal auth diff
+
+on:
+  push:
+    branches:
+      - fix/modelscope-genie-auth
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[minimal-auth-diff]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/modelscope-genie-auth
+          fetch-depth: 0
+      - name: Restore upstream bytes and apply only auth edits
+        run: |
+          git fetch origin main
+          git checkout origin/main -- tts_engine.py
+
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('tts_engine.py')
+          with path.open('r', encoding='utf-8', newline='') as f:
+              text = f.read()
+
+          import_anchor = 'from typing import Optional, Dict\n'
+          import_line = 'from urllib.parse import urlparse\n'
+          if import_line not in text:
+              if import_anchor not in text:
+                  raise SystemExit('typing import anchor not found')
+              text = text.replace(import_anchor, import_anchor + import_line, 1)
+
+          class_anchor = '\r\n\r\nclass TTSEngine:\n'
+          helper = (
+              '\r\n\r\ndef _build_modelscope_auth_headers(server_url: str, config) -> dict:\r\n'
+              '    """Return Bearer auth only for ModelScope dedicated inference hosts."""\r\n'
+              '    token = str(\r\n'
+              '        config.get("modelscope_api_token", "")\r\n'
+              '        or os.getenv("MODELSCOPE_API_TOKEN", "")\r\n'
+              '        or ""\r\n'
+              '    ).strip()\r\n'
+              '    if not token:\r\n'
+              '        return {}\r\n'
+              '\r\n'
+              '    hostname = (urlparse(server_url).hostname or "").lower()\r\n'
+              '    if hostname == "api-inference.modelscope.net" or hostname.endswith(\r\n'
+              '        ".api-inference.modelscope.net"\r\n'
+              '    ):\r\n'
+              '        return {"Authorization": f"Bearer {token}"}\r\n'
+              '    return {}\r\n'
+          )
+          if '_build_modelscope_auth_headers' not in text:
+              if class_anchor not in text:
+                  raise SystemExit('TTSEngine class anchor not found')
+              text = text.replace(class_anchor, helper + class_anchor, 1)
+
+          language_anchor = (
+              '                if not language:\r\n'
+              '                    language = self.config.get("tts_default_language", "jp")\r\n'
+              '\r\n'
+          )
+          auth_line = '                auth_headers = _build_modelscope_auth_headers(server_url, self.config)\r\n\r\n'
+          if auth_line not in text:
+              if language_anchor not in text:
+                  raise SystemExit('language anchor not found')
+              text = text.replace(language_anchor, language_anchor + auth_line, 1)
+
+          old_ref = '                    f"{server_url}/set_reference_audio", json=ref_payload, timeout=60\r\n'
+          new_ref = '                    f"{server_url}/set_reference_audio", json=ref_payload, headers=auth_headers, timeout=60\r\n'
+          if new_ref not in text:
+              if old_ref not in text:
+                  raise SystemExit('set_reference_audio call anchor not found')
+              text = text.replace(old_ref, new_ref, 1)
+
+          old_tts = '                    "POST", f"{server_url}/tts", json=tts_payload, timeout=tts_timeout\r\n'
+          new_tts = '                    "POST", f"{server_url}/tts", json=tts_payload, headers=auth_headers, timeout=tts_timeout\r\n'
+          if new_tts not in text:
+              if old_tts not in text:
+                  raise SystemExit('/tts stream call anchor not found')
+              text = text.replace(old_tts, new_tts, 1)
+
+          with path.open('w', encoding='utf-8', newline='') as f:
+              f.write(text)
+          PY
+
+          python -m unittest discover -s tests -v
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tts_engine.py
+          git commit -m 'fix: preserve upstream file while adding ModelScope auth [minimal-auth-diff]'
+          git push origin HEAD:fix/modelscope-genie-auth
