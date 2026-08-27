@@ -40,6 +40,16 @@ class SessionCharacterBindingsTests(unittest.TestCase):
             bindings = SessionCharacterBindings(path)
             self.assertIsNone(bindings.get("session-a"))
 
+    def test_main_wires_session_binding_into_role_resolution_and_command(self):
+        source = Path("main.py").read_text(encoding="utf-8")
+        self.assertIn("from .session_character_bindings import SessionCharacterBindings", source)
+        self.assertIn("self.session_character_bindings = SessionCharacterBindings(", source)
+        self.assertIn('plugin_data_dir / "session_characters.json"', source)
+        self.assertIn('alias={"语音角色"}', source)
+        self.assertIn("self.session_character_bindings.get(session_id)", source)
+        self.assertIn("self.session_character_bindings.set(session_id, character_name)", source)
+        self.assertIn("self.session_character_bindings.clear(session_id)", source)
+
 
 if __name__ == "__main__":
     unittest.main()
