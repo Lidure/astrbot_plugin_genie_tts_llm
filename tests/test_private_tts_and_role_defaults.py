@@ -39,6 +39,17 @@ class PrivateTtsAndRoleDefaultsTests(unittest.TestCase):
             )
         )
 
+    def test_explicit_private_close_wins_over_active_session(self):
+        self.assertFalse(
+            is_private_tts_active(
+                enable_by_default=True,
+                session_id="private-a",
+                active_sessions={"private-a"},
+                w_active_sessions={"private-a"},
+                inactive_private_sessions={"private-a"},
+            )
+        )
+
     def test_character_default_emotion_parser_accepts_character_equals_emotion(self):
         parsed = parse_character_default_emotions(
             ["airi=平静", "oka = 温柔", "kisaki=开心", "bad-entry"]
