@@ -18,6 +18,11 @@ from .tts_engine import TTSEngine
 from .external_apis import translate_text
 from .session_character_bindings import SessionCharacterBindings
 from .emotion_routing import extract_emotion_directive, parse_provider_emotion_result
+from .conversation_tts_policy import (
+    is_private_tts_active,
+    parse_character_default_emotions,
+    resolve_default_emotion,
+)
 
 
 @register(
@@ -35,6 +40,7 @@ class GenieTtsLlmPlugin(Star):
         self.w_active_sessions: Set[str] = set()
         self.active_groups: Set[str] = set()  # 新增：群组级TTS开关
         self.inactive_groups: Set[str] = set()
+        self.inactive_private_sessions: Set[str] = set()
         self.session_emotions: Dict[str, Dict[str, str]] = {}
         self.session_w_settings: Dict[str, Dict[str, str]] = {}
         self.last_tts_trigger_at: Dict[str, float] = {}
@@ -69,6 +75,8 @@ class GenieTtsLlmPlugin(Star):
 
         if self.config.get("enable_group_tts_by_default", False):
             logger.info("已开启全部群默认语音合成；群组黑名单仍优先。")
+        if self.config.get("enable_private_tts_by_default", False):
+            logger.info("已开启全部私聊默认语音合成；/tts-q 可临时关闭当前私聊。")
 
         logger.info("LLM TTS 插件已加载。")
 
@@ -93,6 +101,41 @@ class GenieTtsLlmPlugin(Star):
             return False
         return bool(self.config.get("enable_group_tts_by_default", False)) or (
             group_id in self.active_groups
+        )
+
+    def _is_private_tts_active(
+        self, session_id: str, group_id: Optional[object]
+    ) -> bool:
+        """检查私聊 TTS 是否开启；显式关闭优先于默认开启。"""
+        if self._normalize_group_id(group_id):
+            return False
+        return is_private_tts_active(
+            enable_by_default=bool(
+                self.config.get("enable_private_tts_by_default", False)
+            ),
+            session_id=session_id,
+            active_sessions=self.active_sessions,
+            w_active_sessions=self.w_active_sessions,
+            inactive_private_sessions=self.inactive_private_sessions,
+        )
+
+    def _get_default_emotion_for_character(
+        self, character_name: Optional[str]
+    ) -> Optional[str]:
+        """按角色解析默认情感，避免切换角色后继续使用不兼容的全局默认。"""
+        if not character_name:
+            return None
+        emotion_names = list(
+            self.emotion_manager.emotions_data.get(character_name, {}).keys()
+        )
+        character_defaults = parse_character_default_emotions(
+            self.config.get("character_default_emotions", [])
+        )
+        return resolve_default_emotion(
+            character_name,
+            emotion_names,
+            self.config.get("default_emotion_name"),
+            character_defaults,
         )
 
     def _should_generate_tts_now(self, session_id: str) -> bool:
@@ -677,8 +720,9 @@ class GenieTtsLlmPlugin(Star):
         session_id = event.unified_msg_origin
         self.active_sessions.add(session_id)
         self.w_active_sessions.discard(session_id)
-        default_char = self.config.get("default_character")
-        default_emotion = self.config.get("default_emotion_name")
+        if not group_id:
+            self.inactive_private_sessions.discard(session_id)
+        default_char, default_emotion, _ = self._resolve_tts_profile(session_id)
         logger.info(f"会话 [{session_id}] 的 LLM TTS 功能已开启。")
         yield event.plain_result(
             f"▶️ 本对话的LLM语音合成已开启。\n将使用默认感情: {default_char} - {default_emotion}"
@@ -687,8 +731,11 @@ class GenieTtsLlmPlugin(Star):
     @filter.command("tts-q", alias={"关闭语音合成"})
     async def stop_tts(self, event: AstrMessageEvent):
         session_id = event.unified_msg_origin
+        group_id = self._normalize_group_id(event.message_obj.group_id)
         self.active_sessions.discard(session_id)
         self.w_active_sessions.discard(session_id)
+        if not group_id and self.config.get("enable_private_tts_by_default", False):
+            self.inactive_private_sessions.add(session_id)
         logger.info(f"会话 [{session_id}] 的所有 LLM TTS 功能已关闭。")
         yield event.plain_result("⏹️ 本对话的所有LLM语音合成功能已关闭。")
 
@@ -748,7 +795,9 @@ class GenieTtsLlmPlugin(Star):
         session_id = event.unified_msg_origin
         self.w_active_sessions.add(session_id)
         self.active_sessions.discard(session_id)
-        default_char = self.config.get("default_character")
+        if not group_id:
+            self.inactive_private_sessions.discard(session_id)
+        default_char, _, _ = self._resolve_tts_profile(session_id)
         logger.info(f"会话 [{session_id}] 的 LLM 自动情感识别 TTS 功能已开启。")
         yield event.plain_result(
             f"▶️ 本对话的自动情感识别语音合成已开启。\n将使用默认角色: {default_char}"
@@ -836,11 +885,13 @@ class GenieTtsLlmPlugin(Star):
             return
 
         self.session_character_bindings.set(session_id, character_name)
+        default_emotion = self._get_default_emotion_for_character(character_name)
         logger.info(
             f"会话 [{session_id}] 已绑定 Genie 语音角色: {character_name}"
         )
         yield event.plain_result(
-            f"本会话语音角色已绑定为: {character_name}。AstrBot 重启后仍会保留。"
+            f"本会话语音角色已绑定为: {character_name}。"
+            f"默认兜底情感: {default_emotion or '未配置'}。AstrBot 重启后仍会保留。"
         )
 
     @filter.llm_tool(name="genie_tts_speak")
@@ -967,14 +1018,7 @@ class GenieTtsLlmPlugin(Star):
         ):
             return preferred_emotion
 
-        default_emotion = self.config.get("default_emotion_name")
-        if default_emotion and self.emotion_manager.get_emotion_data(
-            character_name, default_emotion
-        ):
-            return default_emotion
-
-        character_emotions = self.emotion_manager.emotions_data.get(character_name, {})
-        return next(iter(character_emotions.keys()), None)
+        return self._get_default_emotion_for_character(character_name)
 
     def _resolve_tts_profile(
         self,
@@ -1230,10 +1274,12 @@ class GenieTtsLlmPlugin(Star):
 
         # 只有在开启了TTS模式（自动或固定，或群组模式）时才注入
         is_group_tts_active = self._is_group_tts_active(group_id)
+        is_private_tts_active = self._is_private_tts_active(session_id, group_id)
         is_active = (
             session_id in self.active_sessions
             or session_id in self.w_active_sessions
             or is_group_tts_active
+            or is_private_tts_active
         )
 
         if not is_active:
@@ -1345,10 +1391,12 @@ class GenieTtsLlmPlugin(Star):
 
         # 检查是否开启了TTS (个人会话 或 群组)
         is_group_tts_active = self._is_group_tts_active(group_id)
+        is_private_tts_active = self._is_private_tts_active(session_id, group_id)
         is_active = (
             session_id in self.active_sessions
             or session_id in self.w_active_sessions
             or is_group_tts_active
+            or is_private_tts_active
         )
 
         if not is_active:
@@ -1398,9 +1446,9 @@ class GenieTtsLlmPlugin(Star):
             target_emotion = (
                 session_setting["emotion"]
                 if session_setting
-                else self.config.get("default_emotion_name")
+                else self._get_default_emotion_for_character(char_name)
             )
-            emotion_source = "会话固定情感" if session_setting else "默认情感"
+            emotion_source = "会话固定情感" if session_setting else "角色默认情感"
 
         if not char_name or not self.emotion_manager.character_exists(char_name):
             resp.result_chain.chain.append(
@@ -1488,14 +1536,14 @@ class GenieTtsLlmPlugin(Star):
         # 最终合成
         # 如果此时还没有 target_emotion (比如固定模式没注入，或者自动模式失败)，使用默认
         if not target_emotion:
-            target_emotion = self.config.get("default_emotion_name")
-            emotion_source = "默认情感兜底"
+            target_emotion = self._get_default_emotion_for_character(char_name)
+            emotion_source = "角色默认情感兜底"
 
         emotion_data = self.emotion_manager.get_emotion_data(char_name, target_emotion)
         if not emotion_data:
-            # 尝试回落到默认情感
+            # 尝试回落到当前角色自己的安全默认情感
             invalid_emotion = target_emotion
-            default_emotion = self.config.get("default_emotion_name")
+            default_emotion = self._get_default_emotion_for_character(char_name)
             emotion_data = self.emotion_manager.get_emotion_data(
                 char_name, default_emotion
             )

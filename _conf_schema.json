@@ -6,6 +6,13 @@
     "type": "bool",
     "default": false
   },
+  "enable_private_tts_by_default": {
+    "title": "默认开启全部私聊语音",
+    "description": "所有私聊默认开启",
+    "hint": "开启后无需在每个私聊执行 /tts-llm；/tts-q 可临时关闭当前私聊，插件重启后恢复默认。",
+    "type": "bool",
+    "default": false
+  },
   "group_whitelist": {
     "title": "群组白名单",
     "description": "启动时自动开启",
@@ -51,6 +58,16 @@
     "hint": "固定情感模式下使用。必须已通过 /注册感情 注册，或已导入 emotions.json。",
     "type": "string",
     "default": "开心"
+  },
+  "character_default_emotions": {
+    "title": "角色默认感情",
+    "description": "按角色设置兜底感情",
+    "hint": "每行填写 角色=感情，例如 airi=平静、oka=平静、kisaki=开心。角色专属默认优先；未配置时尝试上方全局默认，再回落到该角色第一个已注册感情。",
+    "type": "list",
+    "items": {
+      "type": "string"
+    },
+    "default": []
   },
   "tts_default_language": {
     "title": "TTS 默认语言",
