@@ -15,98 +15,29 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: fix/private-default-tts-role-emotion
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Apply focused patch
+      - name: Make private TTS default-on
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          def replace_once(text, old, new, label):
-              if old not in text:
-                  raise SystemExit(f"missing patch anchor: {label}")
-              if text.count(old) != 1:
-                  raise SystemExit(f"non-unique patch anchor: {label} ({text.count(old)})")
-              return text.replace(old, new, 1)
+          main = Path("main.py")
+          text = main.read_text(encoding="utf-8")
+          old = 'self.config.get("enable_private_tts_by_default", False)'
+          count = text.count(old)
+          if count != 3:
+              raise SystemExit(f"expected 3 private default fallbacks, got {count}")
+          main.write_text(text.replace(old, 'self.config.get("enable_private_tts_by_default", True)'), encoding="utf-8")
 
-          path = Path("main.py")
-          text = path.read_text(encoding="utf-8")
-
-          text = replace_once(
-              text,
-              "from .emotion_routing import extract_emotion_directive, parse_provider_emotion_result\n",
-              "from .emotion_routing import extract_emotion_directive, parse_provider_emotion_result\nfrom .conversation_tts_policy import (\n    is_private_tts_active,\n    parse_character_default_emotions,\n    resolve_default_emotion,\n)\n",
-              "policy import",
-          )
-
-          text = replace_once(
-              text,
-              "        self.inactive_groups: Set[str] = set()\n        self.session_emotions: Dict[str, Dict[str, str]] = {}\n",
-              "        self.inactive_groups: Set[str] = set()\n        self.inactive_private_sessions: Set[str] = set()\n        self.session_emotions: Dict[str, Dict[str, str]] = {}\n",
-              "private inactive state",
-          )
-
-          text = replace_once(
-              text,
-              "        if self.config.get(\"enable_group_tts_by_default\", False):\n            logger.info(\"已开启全部群默认语音合成；群组黑名单仍优先。\")\n\n        logger.info(\"LLM TTS 插件已加载。\")\n",
-              "        if self.config.get(\"enable_group_tts_by_default\", False):\n            logger.info(\"已开启全部群默认语音合成；群组黑名单仍优先。\")\n        if self.config.get(\"enable_private_tts_by_default\", False):\n            logger.info(\"已开启全部私聊默认语音合成；/tts-q 可临时关闭当前私聊。\")\n\n        logger.info(\"LLM TTS 插件已加载。\")\n",
-              "private startup log",
-          )
-
-          group_helper = '''    def _is_group_tts_active(self, group_id: Optional[object]) -> bool:\n        \"\"\"检查群组级 TTS 是否开启。黑名单 > 运行时关闭 > 默认全开/白名单/手动开启。\"\"\"\n        group_id = self._normalize_group_id(group_id)\n        if not group_id or self._is_group_blacklisted(group_id):\n            return False\n        if group_id in self.inactive_groups:\n            return False\n        return bool(self.config.get(\"enable_group_tts_by_default\", False)) or (\n            group_id in self.active_groups\n        )\n'''
-          policy_helpers = group_helper + '''\n    def _is_private_tts_active(\n        self, session_id: str, group_id: Optional[object]\n    ) -> bool:\n        \"\"\"检查私聊 TTS 是否开启；显式关闭优先于默认开启。\"\"\"\n        if self._normalize_group_id(group_id):\n            return False\n        return is_private_tts_active(\n            enable_by_default=bool(\n                self.config.get(\"enable_private_tts_by_default\", False)\n            ),\n            session_id=session_id,\n            active_sessions=self.active_sessions,\n            w_active_sessions=self.w_active_sessions,\n            inactive_private_sessions=self.inactive_private_sessions,\n        )\n\n    def _get_default_emotion_for_character(\n        self, character_name: Optional[str]\n    ) -> Optional[str]:\n        \"\"\"按角色解析默认情感，避免切换角色后继续使用不兼容的全局默认。\"\"\"\n        if not character_name:\n            return None\n        emotion_names = list(\n            self.emotion_manager.emotions_data.get(character_name, {}).keys()\n        )\n        character_defaults = parse_character_default_emotions(\n            self.config.get(\"character_default_emotions\", [])\n        )\n        return resolve_default_emotion(\n            character_name,\n            emotion_names,\n            self.config.get(\"default_emotion_name\"),\n            character_defaults,\n        )\n'''
-          text = replace_once(text, group_helper, policy_helpers, "policy helpers")
-
-          old_pick = '''        default_emotion = self.config.get(\"default_emotion_name\")\n        if default_emotion and self.emotion_manager.get_emotion_data(\n            character_name, default_emotion\n        ):\n            return default_emotion\n\n        character_emotions = self.emotion_manager.emotions_data.get(character_name, {})\n        return next(iter(character_emotions.keys()), None)\n'''
-          new_pick = '''        return self._get_default_emotion_for_character(character_name)\n'''
-          text = replace_once(text, old_pick, new_pick, "role default picker")
-
-          active_block = '''        is_group_tts_active = self._is_group_tts_active(group_id)\n        is_active = (\n            session_id in self.active_sessions\n            or session_id in self.w_active_sessions\n            or is_group_tts_active\n        )\n'''
-          active_new = '''        is_group_tts_active = self._is_group_tts_active(group_id)\n        is_private_tts_active = self._is_private_tts_active(session_id, group_id)\n        is_active = (\n            session_id in self.active_sessions\n            or session_id in self.w_active_sessions\n            or is_group_tts_active\n            or is_private_tts_active\n        )\n'''
-          if text.count(active_block) != 2:
-              raise SystemExit(f"expected 2 active blocks, got {text.count(active_block)}")
-          text = text.replace(active_block, active_new)
-
-          old_fixed_default = '''            target_emotion = (\n                session_setting[\"emotion\"]\n                if session_setting\n                else self.config.get(\"default_emotion_name\")\n            )\n            emotion_source = \"会话固定情感\" if session_setting else \"默认情感\"\n'''
-          new_fixed_default = '''            target_emotion = (\n                session_setting[\"emotion\"]\n                if session_setting\n                else self._get_default_emotion_for_character(char_name)\n            )\n            emotion_source = \"会话固定情感\" if session_setting else \"角色默认情感\"\n'''
-          text = replace_once(text, old_fixed_default, new_fixed_default, "fixed default emotion")
-
-          old_final_default = '''        if not target_emotion:\n            target_emotion = self.config.get(\"default_emotion_name\")\n            emotion_source = \"默认情感兜底\"\n\n        emotion_data = self.emotion_manager.get_emotion_data(char_name, target_emotion)\n        if not emotion_data:\n            # 尝试回落到默认情感\n            invalid_emotion = target_emotion\n            default_emotion = self.config.get(\"default_emotion_name\")\n            emotion_data = self.emotion_manager.get_emotion_data(\n                char_name, default_emotion\n            )\n'''
-          new_final_default = '''        if not target_emotion:\n            target_emotion = self._get_default_emotion_for_character(char_name)\n            emotion_source = \"角色默认情感兜底\"\n\n        emotion_data = self.emotion_manager.get_emotion_data(char_name, target_emotion)\n        if not emotion_data:\n            # 尝试回落到当前角色自己的安全默认情感\n            invalid_emotion = target_emotion\n            default_emotion = self._get_default_emotion_for_character(char_name)\n            emotion_data = self.emotion_manager.get_emotion_data(\n                char_name, default_emotion\n            )\n'''
-          text = replace_once(text, old_final_default, new_final_default, "final role fallback")
-
-          old_start = '''        session_id = event.unified_msg_origin\n        self.active_sessions.add(session_id)\n        self.w_active_sessions.discard(session_id)\n        default_char = self.config.get(\"default_character\")\n        default_emotion = self.config.get(\"default_emotion_name\")\n'''
-          new_start = '''        session_id = event.unified_msg_origin\n        self.active_sessions.add(session_id)\n        self.w_active_sessions.discard(session_id)\n        if not group_id:\n            self.inactive_private_sessions.discard(session_id)\n        default_char, default_emotion, _ = self._resolve_tts_profile(session_id)\n'''
-          text = replace_once(text, old_start, new_start, "start private re-enable")
-
-          old_stop = '''        session_id = event.unified_msg_origin\n        self.active_sessions.discard(session_id)\n        self.w_active_sessions.discard(session_id)\n        logger.info(f\"会话 [{session_id}] 的所有 LLM TTS 功能已关闭。\")\n'''
-          new_stop = '''        session_id = event.unified_msg_origin\n        group_id = self._normalize_group_id(event.message_obj.group_id)\n        self.active_sessions.discard(session_id)\n        self.w_active_sessions.discard(session_id)\n        if not group_id and self.config.get(\"enable_private_tts_by_default\", False):\n            self.inactive_private_sessions.add(session_id)\n        logger.info(f\"会话 [{session_id}] 的所有 LLM TTS 功能已关闭。\")\n'''
-          text = replace_once(text, old_stop, new_stop, "stop private default")
-
-          old_w_start = '''        session_id = event.unified_msg_origin\n        self.w_active_sessions.add(session_id)\n        self.active_sessions.discard(session_id)\n        default_char = self.config.get(\"default_character\")\n'''
-          new_w_start = '''        session_id = event.unified_msg_origin\n        self.w_active_sessions.add(session_id)\n        self.active_sessions.discard(session_id)\n        if not group_id:\n            self.inactive_private_sessions.discard(session_id)\n        default_char, _, _ = self._resolve_tts_profile(session_id)\n'''
-          text = replace_once(text, old_w_start, new_w_start, "w private re-enable")
-
-          old_role_message = '''        self.session_character_bindings.set(session_id, character_name)\n        logger.info(\n            f\"会话 [{session_id}] 已绑定 Genie 语音角色: {character_name}\"\n        )\n        yield event.plain_result(\n            f\"本会话语音角色已绑定为: {character_name}。AstrBot 重启后仍会保留。\"\n        )\n'''
-          new_role_message = '''        self.session_character_bindings.set(session_id, character_name)\n        default_emotion = self._get_default_emotion_for_character(character_name)\n        logger.info(\n            f\"会话 [{session_id}] 已绑定 Genie 语音角色: {character_name}\"\n        )\n        yield event.plain_result(\n            f\"本会话语音角色已绑定为: {character_name}。\"\n            f\"默认兜底情感: {default_emotion or '未配置'}。AstrBot 重启后仍会保留。\"\n        )\n'''
-          text = replace_once(text, old_role_message, new_role_message, "role switch message")
-
-          path.write_text(text, encoding="utf-8")
-
-          schema_path = Path("_conf_schema.json")
-          schema = schema_path.read_text(encoding="utf-8")
-          group_anchor = '''  \"enable_group_tts_by_default\": {\n    \"title\": \"默认开启全部群语音\",\n    \"description\": \"所有群默认开启\",\n    \"hint\": \"开启后无需配置群组白名单或执行 /ttg。群组黑名单仍优先；/ttg-q 可临时关闭当前群，插件重启后恢复默认。\",\n    \"type\": \"bool\",\n    \"default\": false\n  },\n'''
-          private_block = group_anchor + '''  \"enable_private_tts_by_default\": {\n    \"title\": \"默认开启全部私聊语音\",\n    \"description\": \"所有私聊默认开启\",\n    \"hint\": \"开启后无需在每个私聊执行 /tts-llm；/tts-q 可临时关闭当前私聊，插件重启后恢复默认。\",\n    \"type\": \"bool\",\n    \"default\": false\n  },\n'''
-          schema = replace_once(schema, group_anchor, private_block, "private schema")
-
-          emotion_anchor = '''  \"default_emotion_name\": {\n    \"title\": \"默认感情名称\",\n    \"description\": \"默认感情\",\n    \"hint\": \"固定情感模式下使用。必须已通过 /注册感情 注册，或已导入 emotions.json。\",\n    \"type\": \"string\",\n    \"default\": \"开心\"\n  },\n'''
-          role_emotion_block = emotion_anchor + '''  \"character_default_emotions\": {\n    \"title\": \"角色默认感情\",\n    \"description\": \"按角色设置兜底感情\",\n    \"hint\": \"每行填写 角色=感情，例如 airi=平静、oka=平静、kisaki=开心。角色专属默认优先；未配置时尝试上方全局默认，再回落到该角色第一个已注册感情。\",\n    \"type\": \"list\",\n    \"items\": {\n      \"type\": \"string\"\n    },\n    \"default\": []\n  },\n'''
-          schema = replace_once(schema, emotion_anchor, role_emotion_block, "role emotion schema")
-          schema_path.write_text(schema, encoding="utf-8")
+          schema = Path("_conf_schema.json")
+          data = schema.read_text(encoding="utf-8")
+          anchor = '''  "enable_private_tts_by_default": {\n    "title": "默认开启全部私聊语音",\n    "description": "所有私聊默认开启",\n    "hint": "开启后无需在每个私聊执行 /tts-llm；/tts-q 可临时关闭当前私聊，插件重启后恢复默认。",\n    "type": "bool",\n    "default": false\n  },\n'''
+          replacement = anchor.replace('"default": false', '"default": true')
+          if data.count(anchor) != 1:
+              raise SystemExit(f"private schema anchor count: {data.count(anchor)}")
+          schema.write_text(data.replace(anchor, replacement, 1), encoding="utf-8")
           PY
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add main.py _conf_schema.json
-          git commit -m "fix: enable private TTS defaults with role-aware emotions"
+          git commit -m "fix: default private TTS to enabled"
           git push origin HEAD:fix/private-default-tts-role-emotion
