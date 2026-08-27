@@ -17,6 +17,7 @@ from .emotion_manager import EmotionManager
 from .tts_engine import TTSEngine
 from .external_apis import translate_text
 from .session_character_bindings import SessionCharacterBindings
+from .emotion_routing import extract_emotion_directive, parse_provider_emotion_result
 
 
 @register(
@@ -215,9 +216,7 @@ class GenieTtsLlmPlugin(Star):
         self, text: str
     ) -> Tuple[str, Optional[str], Optional[str]]:
         working_text = (text or "").strip()
-        emotion_matches = re.findall(r"\[emotion=(.*?)\]", working_text)
-        tagged_emotion = emotion_matches[-1].strip() if emotion_matches else None
-        working_text = re.sub(r"\s*\[emotion=.*?\]\s*", " ", working_text).strip()
+        working_text, tagged_emotion = extract_emotion_directive(working_text)
 
         tagged_translation = None
         translation_match = re.search(
@@ -260,12 +259,10 @@ class GenieTtsLlmPlugin(Star):
         tagged_translation = None
 
         if strip_emotion:
-            emotion_matches = re.findall(r"\[emotion=(.*?)\]", working_text)
-            if emotion_matches:
-                tagged_emotion = emotion_matches[-1].strip()
-                working_text = re.sub(
-                    r"\s*\[emotion=.*?\]\s*", " ", working_text
-                ).strip()
+            cleaned_emotion_text, parsed_emotion = extract_emotion_directive(working_text)
+            if parsed_emotion:
+                tagged_emotion = parsed_emotion
+                working_text = cleaned_emotion_text
                 changed = True
 
         if strip_translation:
@@ -1119,11 +1116,16 @@ class GenieTtsLlmPlugin(Star):
         if not backend_result:
             return None, None
 
-        match = re.search(r"(.*)\[(.+?)\]\s*$", backend_result.strip(), re.DOTALL)
-        if not match:
-            return backend_result.strip(), None
+        if self.config.get("enable_translation_debug_log", False):
+            logger.info(
+                "Provider自动情感原始结果: "
+                f"{self._preview_log_text(backend_result)}"
+            )
 
-        return match.group(1).strip(), match.group(2).strip()
+        translated_text, parsed_emotion = parse_provider_emotion_result(
+            backend_result, emotion_names
+        )
+        return translated_text, parsed_emotion
 
     def _build_llm_tool_prompt(self, session_id: Optional[str] = None) -> Optional[str]:
         settings = self.config.get("llm_injection_settings", {})
@@ -1266,20 +1268,8 @@ class GenieTtsLlmPlugin(Star):
         prompts_to_inject = []
 
         if enable_emotion:
-            # 确定当前角色以获取可用情感列表
-            char_name = None
-            if session_id in self.w_active_sessions:
-                char_name = self.session_w_settings.get(session_id, {}).get(
-                    "character"
-                ) or self.config.get("default_character")
-            elif session_id in self.active_sessions or is_group_tts_active:
-                # 固定模式或群组模式下
-                session_setting = self.session_emotions.get(session_id)
-                char_name = (
-                    session_setting["character"]
-                    if session_setting
-                    else self.config.get("default_character")
-                )
+            # 与实际合成共用同一角色解析，确保会话级角色绑定参与情感列表注入。
+            char_name, _, _ = self._resolve_tts_profile(session_id)
 
             if char_name and self.emotion_manager.character_exists(char_name):
                 emotions = list(self.emotion_manager.emotions_data[char_name].keys())
@@ -1401,27 +1391,16 @@ class GenieTtsLlmPlugin(Star):
         target_text = None
         char_name = None
 
-        # 确定角色
-        if session_id in self.w_active_sessions:
-            char_name = self.session_w_settings.get(session_id, {}).get(
-                "character"
-            ) or self.config.get("default_character")
-        else:
-            # 固定模式 或 群组模式
-            session_setting = self.session_emotions.get(session_id)
-            char_name = (
-                session_setting["character"]
+        # 确定角色：与工具调用、Prompt 注入共用同一解析逻辑。
+        char_name, _, _ = self._resolve_tts_profile(session_id)
+        session_setting = self.session_emotions.get(session_id)
+        if session_id not in self.w_active_sessions and not injected_emotion:
+            target_emotion = (
+                session_setting["emotion"]
                 if session_setting
-                else self.config.get("default_character")
+                else self.config.get("default_emotion_name")
             )
-            # 固定模式下，如果没有注入情感，使用默认情感
-            if not injected_emotion:
-                target_emotion = (
-                    session_setting["emotion"]
-                    if session_setting
-                    else self.config.get("default_emotion_name")
-                )
-                emotion_source = "会话固定情感" if session_setting else "默认情感"
+            emotion_source = "会话固定情感" if session_setting else "默认情感"
 
         if not char_name or not self.emotion_manager.character_exists(char_name):
             resp.result_chain.chain.append(
