@@ -75,7 +75,7 @@ class GenieTtsLlmPlugin(Star):
 
         if self.config.get("enable_group_tts_by_default", False):
             logger.info("已开启全部群默认语音合成；群组黑名单仍优先。")
-        if self.config.get("enable_private_tts_by_default", False):
+        if self.config.get("enable_private_tts_by_default", True):
             logger.info("已开启全部私聊默认语音合成；/tts-q 可临时关闭当前私聊。")
 
         logger.info("LLM TTS 插件已加载。")
@@ -111,7 +111,7 @@ class GenieTtsLlmPlugin(Star):
             return False
         return is_private_tts_active(
             enable_by_default=bool(
-                self.config.get("enable_private_tts_by_default", False)
+                self.config.get("enable_private_tts_by_default", True)
             ),
             session_id=session_id,
             active_sessions=self.active_sessions,
@@ -734,7 +734,7 @@ class GenieTtsLlmPlugin(Star):
         group_id = self._normalize_group_id(event.message_obj.group_id)
         self.active_sessions.discard(session_id)
         self.w_active_sessions.discard(session_id)
-        if not group_id and self.config.get("enable_private_tts_by_default", False):
+        if not group_id and self.config.get("enable_private_tts_by_default", True):
             self.inactive_private_sessions.add(session_id)
         logger.info(f"会话 [{session_id}] 的所有 LLM TTS 功能已关闭。")
         yield event.plain_result("⏹️ 本对话的所有LLM语音合成功能已关闭。")

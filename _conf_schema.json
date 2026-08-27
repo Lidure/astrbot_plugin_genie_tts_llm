@@ -11,7 +11,7 @@
     "description": "所有私聊默认开启",
     "hint": "开启后无需在每个私聊执行 /tts-llm；/tts-q 可临时关闭当前私聊，插件重启后恢复默认。",
     "type": "bool",
-    "default": false
+    "default": true
   },
   "group_whitelist": {
     "title": "群组白名单",
