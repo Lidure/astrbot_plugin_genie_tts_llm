@@ -278,6 +278,13 @@
         "type": "bool",
         "default": false
       },
+      "enable_provider_emotion_autofill": {
+        "title": "Provider 自动补判情感",
+        "description": "翻译时顺便判断情感",
+        "hint": "仅在“外语TTS准备方式=provider_translation”时生效。开启后，如果本轮没有通过 /sw 等方式固定情感，也没有有效的 [emotion=xxx] 标签，翻译 Provider 会从当前角色已注册情感中自动补选一个；判定失败时仍回落角色默认情感，不会覆盖显式情感。原有 /tts-w 自动情感模式不依赖此开关。",
+        "type": "bool",
+        "default": false
+      },
       "llm_emotion_prompt": {
         "title": "情感识别提示词",
         "description": "注入 Prompt",

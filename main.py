@@ -17,7 +17,11 @@ from .emotion_manager import EmotionManager
 from .tts_engine import TTSEngine
 from .external_apis import translate_text
 from .session_character_bindings import SessionCharacterBindings
-from .emotion_routing import extract_emotion_directive, parse_provider_emotion_result
+from .emotion_routing import (
+    extract_emotion_directive,
+    parse_provider_emotion_result,
+    should_provider_autofill_emotion,
+)
 from .conversation_tts_policy import (
     is_private_tts_active,
     parse_character_default_emotions,
@@ -942,9 +946,45 @@ class GenieTtsLlmPlugin(Star):
 
         translation_enabled = self.config.get("enable_translation", True)
         translation_workflow = self._get_translation_workflow()
+        settings = self.config.get("llm_injection_settings", {})
+        session_setting = self.session_emotions.get(session_id)
+        has_manual_tool_emotion = bool(emotion_name) or bool(
+            session_setting and session_setting.get("character") == char_name
+        )
+        provider_emotion_autofill = should_provider_autofill_emotion(
+            enabled=bool(
+                translation_enabled
+                and settings.get("enable_provider_emotion_autofill", False)
+            ),
+            translation_workflow=translation_workflow,
+            has_manual_emotion=has_manual_tool_emotion,
+            has_injected_emotion=False,
+            w_mode_active=False,
+        )
 
         if translation_enabled and translation_workflow == "provider_translation":
-            target_text = await self._translate_text_with_backends(display_text)
+            target_text = None
+            if provider_emotion_autofill:
+                character_emotions = list(
+                    self.emotion_manager.emotions_data[char_name].keys()
+                )
+                target_text, provider_emotion = (
+                    await self._translate_text_and_pick_emotion_with_backends(
+                        display_text, character_emotions
+                    )
+                )
+                if provider_emotion:
+                    resolved_emotion = provider_emotion
+                    emotion_data = self.emotion_manager.get_emotion_data(
+                        char_name, resolved_emotion
+                    )
+                    logger.info(
+                        f"[{session_id}] LLM工具 Provider自动补判情感: "
+                        f"{char_name} - {resolved_emotion}"
+                    )
+
+            if not target_text:
+                target_text = await self._translate_text_with_backends(display_text)
         elif tagged_translation:
             target_text = tagged_translation
         else:
@@ -1442,13 +1482,26 @@ class GenieTtsLlmPlugin(Star):
         # 确定角色：与工具调用、Prompt 注入共用同一解析逻辑。
         char_name, _, _ = self._resolve_tts_profile(session_id)
         session_setting = self.session_emotions.get(session_id)
-        if session_id not in self.w_active_sessions and not injected_emotion:
-            target_emotion = (
-                session_setting["emotion"]
-                if session_setting
-                else self._get_default_emotion_for_character(char_name)
-            )
-            emotion_source = "会话固定情感" if session_setting else "角色默认情感"
+        provider_emotion_autofill = should_provider_autofill_emotion(
+            enabled=bool(
+                self.config.get("enable_translation", True)
+                and settings.get("enable_provider_emotion_autofill", False)
+            ),
+            translation_workflow=translation_workflow,
+            has_manual_emotion=bool(session_setting),
+            has_injected_emotion=bool(enable_llm_emotion and injected_emotion),
+            w_mode_active=session_id in self.w_active_sessions,
+        )
+
+        if session_setting:
+            target_emotion = session_setting["emotion"]
+            emotion_source = "会话固定情感"
+        elif enable_llm_emotion and injected_emotion:
+            target_emotion = injected_emotion
+            emotion_source = "LLM情感标签"
+        elif not provider_emotion_autofill:
+            target_emotion = self._get_default_emotion_for_character(char_name)
+            emotion_source = "角色默认情感"
 
         if not char_name or not self.emotion_manager.character_exists(char_name):
             resp.result_chain.chain.append(
@@ -1456,14 +1509,21 @@ class GenieTtsLlmPlugin(Star):
             )
             return
 
-        # 确定情感
-        if enable_llm_emotion and injected_emotion:
-            target_emotion = injected_emotion
-            emotion_source = "LLM情感标签"
-        elif enable_llm_emotion and not injected_emotion:
+        # 确定情感。显式会话情感优先于主 LLM 标签；缺失时才允许 Provider 补判。
+        if session_setting and enable_llm_emotion and injected_emotion:
+            logger.info(
+                f"[{session_id}] 同时存在会话固定情感和 LLM 情感标签，"
+                "已按优先级保留会话固定情感。"
+            )
+        elif enable_llm_emotion and not injected_emotion and not session_setting:
+            fallback_note = (
+                "将交给 Provider 自动补判情感。"
+                if provider_emotion_autofill
+                else "将使用角色默认情感。"
+            )
             logger.info(
                 f"[{session_id}] 已开启LLM情感标签，但本轮回复未解析到 [emotion=xxx]，"
-                "将使用会话固定/默认情感。请确认角色已注册情感、且情感提示词包含 {emotions} 占位符。"
+                f"{fallback_note}请确认角色已注册情感、且情感提示词包含 {{emotions}} 占位符。"
             )
 
         # 确定翻译文本
@@ -1474,8 +1534,8 @@ class GenieTtsLlmPlugin(Star):
             target_text = original_text
         else:
             if translation_workflow == "provider_translation":
-                # provider 模式下，自动情感识别可由独立翻译 Provider 一并完成。
-                if session_id in self.w_active_sessions and not target_emotion:
+                # /tts-w 或新开关可让翻译 Provider 在缺少显式情感时顺便补判。
+                if provider_emotion_autofill and not target_emotion:
                     character_emotions = list(
                         self.emotion_manager.emotions_data[char_name].keys()
                     )
@@ -1485,7 +1545,11 @@ class GenieTtsLlmPlugin(Star):
                         )
                     )
                     if target_emotion:
-                        emotion_source = "翻译Provider情感识别"
+                        emotion_source = (
+                            "翻译Provider情感识别"
+                            if session_id in self.w_active_sessions
+                            else "Provider自动补判情感"
+                        )
 
                 if not target_text:
                     target_text = await self._translate_text_with_backends(
