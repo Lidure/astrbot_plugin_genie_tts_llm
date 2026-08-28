@@ -332,7 +332,7 @@
       "astrbot_provider_id": {
         "title": "AstrBot Provider",
         "description": "翻译提供商",
-        "hint": "当“外语TTS准备方式=provider_translation”时优先使用它来翻译；/tts-w 或开启“Provider 自动补判情感”时，也会让它一起从当前角色可用情感中选择情感名。",
+        "hint": "当“外语TTS准备方式=provider_translation”时优先使用它来翻译；自动情感模式下也会让它一起返回情感名。",
         "type": "string",
         "default": "",
         "_special": "select_provider"
@@ -394,7 +394,7 @@
       "w_mode_prompt": {
         "title": "自动情感提示词",
         "description": "翻译并选情感",
-        "hint": "自动情感识别或“Provider 自动补判情感”使用。无论走 AstrBot Provider 还是外部翻译 API，这个模板都会用于“翻译并选择情感”。{emotion_list} 会替换为感情列表，{text} 会替换为原文。",
+        "hint": "自动情感识别模式使用。无论你走 AstrBot Provider 还是外部翻译 API，这个模板都会用于“翻译并选择情感”。{emotion_list} 会替换为感情列表，{text} 会替换为原文。",
         "type": "text",
         "default": "请对以下中文内容进行翻译和情感分析。首先翻译成日语，然后从以下情感列表中选择最合适的一个：{emotion_list}。请按以下格式输出：\n[翻译后的日语文本][选择的情感名]\n\n原文：{text}"
       }
