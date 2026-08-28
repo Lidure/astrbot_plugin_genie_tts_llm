@@ -1,3 +1,4 @@
+import ast
 import json
 import unittest
 from pathlib import Path
@@ -99,9 +100,23 @@ class EmotionRoutingTests(unittest.TestCase):
         self.assertFalse(settings["enable_provider_emotion_autofill"]["default"])
 
         source = Path("main.py").read_text(encoding="utf-8")
+        ast.parse(source)
         self.assertIn("should_provider_autofill_emotion", source)
         self.assertIn("enable_provider_emotion_autofill", source)
         self.assertIn("Provider自动补判情感", source)
+
+    def test_main_prioritizes_manual_then_llm_then_provider_autofill(self):
+        source = Path("main.py").read_text(encoding="utf-8")
+        priority_block = '''        if session_setting:\n            target_emotion = session_setting["emotion"]\n            emotion_source = "会话固定情感"\n        elif enable_llm_emotion and injected_emotion:\n            target_emotion = injected_emotion\n            emotion_source = "LLM情感标签"\n        elif not provider_emotion_autofill:\n            target_emotion = self._get_default_emotion_for_character(char_name)\n'''
+        self.assertIn(priority_block, source)
+        self.assertIn("if provider_emotion_autofill and not target_emotion:", source)
+        self.assertIn('else "Provider自动补判情感"', source)
+
+    def test_llm_tool_preserves_explicit_emotion_before_provider_autofill(self):
+        source = Path("main.py").read_text(encoding="utf-8")
+        self.assertIn("has_manual_tool_emotion = bool(emotion_name)", source)
+        self.assertIn("has_manual_emotion=has_manual_tool_emotion", source)
+        self.assertIn("LLM工具 Provider自动补判情感", source)
 
     def test_main_uses_shared_session_role_resolution_in_emotion_paths(self):
         source = Path("main.py").read_text(encoding="utf-8")
