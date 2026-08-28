@@ -1,6 +1,8 @@
+import json
 import unittest
 from pathlib import Path
 
+import emotion_routing
 from emotion_routing import extract_emotion_directive, parse_provider_emotion_result
 
 
@@ -37,6 +39,69 @@ class EmotionRoutingTests(unittest.TestCase):
         )
         self.assertEqual(translated, "今日はいい天気ですね。[愤怒]")
         self.assertIsNone(emotion)
+
+    def test_provider_emotion_autofill_only_runs_when_no_explicit_emotion(self):
+        helper = getattr(emotion_routing, "should_provider_autofill_emotion", None)
+        self.assertIsNotNone(helper, "provider emotion autofill routing helper is missing")
+        if helper is None:
+            return
+
+        self.assertTrue(
+            helper(
+                enabled=True,
+                translation_workflow="provider_translation",
+                has_manual_emotion=False,
+                has_injected_emotion=False,
+                w_mode_active=False,
+            )
+        )
+        self.assertFalse(
+            helper(
+                enabled=True,
+                translation_workflow="provider_translation",
+                has_manual_emotion=True,
+                has_injected_emotion=False,
+                w_mode_active=False,
+            )
+        )
+        self.assertFalse(
+            helper(
+                enabled=True,
+                translation_workflow="provider_translation",
+                has_manual_emotion=False,
+                has_injected_emotion=True,
+                w_mode_active=False,
+            )
+        )
+        self.assertFalse(
+            helper(
+                enabled=True,
+                translation_workflow="llm_injection",
+                has_manual_emotion=False,
+                has_injected_emotion=False,
+                w_mode_active=False,
+            )
+        )
+        self.assertTrue(
+            helper(
+                enabled=False,
+                translation_workflow="provider_translation",
+                has_manual_emotion=False,
+                has_injected_emotion=False,
+                w_mode_active=True,
+            )
+        )
+
+    def test_provider_emotion_autofill_has_opt_in_config_and_main_integration(self):
+        schema = json.loads(Path("_conf_schema.json").read_text(encoding="utf-8"))
+        settings = schema["llm_injection_settings"]["items"]
+        self.assertIn("enable_provider_emotion_autofill", settings)
+        self.assertFalse(settings["enable_provider_emotion_autofill"]["default"])
+
+        source = Path("main.py").read_text(encoding="utf-8")
+        self.assertIn("should_provider_autofill_emotion", source)
+        self.assertIn("enable_provider_emotion_autofill", source)
+        self.assertIn("Provider自动补判情感", source)
 
     def test_main_uses_shared_session_role_resolution_in_emotion_paths(self):
         source = Path("main.py").read_text(encoding="utf-8")
