@@ -58,3 +58,23 @@ def parse_provider_emotion_result(
             return working[: match.start()].strip(), candidate
 
     return working, None
+
+
+def should_provider_autofill_emotion(
+    *,
+    enabled: bool,
+    translation_workflow: str,
+    has_manual_emotion: bool,
+    has_injected_emotion: bool,
+    w_mode_active: bool,
+) -> bool:
+    """Return whether provider_translation should infer an emotion for this request.
+
+    Explicit emotion choices always win. The legacy /tts-w mode keeps its existing
+    provider emotion behavior even when the new opt-in autofill switch is disabled.
+    """
+    if str(translation_workflow or "").strip().lower() != "provider_translation":
+        return False
+    if has_manual_emotion or has_injected_emotion:
+        return False
+    return bool(enabled or w_mode_active)
