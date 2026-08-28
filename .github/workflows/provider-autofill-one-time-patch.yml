@@ -1,0 +1,89 @@
+name: One-time provider emotion autofill integration patch
+
+on:
+  push:
+    branches:
+      - feat/provider-translation-emotion-autofill
+
+permissions:
+  contents: write
+
+jobs:
+  patch-main:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/provider-translation-emotion-autofill
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Patch main.py
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("main.py")
+          source = path.read_text(encoding="utf-8")
+
+          def replace_once(old: str, new: str, label: str) -> None:
+              global source
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected exactly one match, got {count}")
+              source = source.replace(old, new, 1)
+
+          if "should_provider_autofill_emotion" in source:
+              print("main.py already contains provider emotion autofill integration")
+              raise SystemExit(0)
+
+          replace_once(
+              "from .emotion_routing import extract_emotion_directive, parse_provider_emotion_result\n",
+              "from .emotion_routing import (\n"
+              "    extract_emotion_directive,\n"
+              "    parse_provider_emotion_result,\n"
+              "    should_provider_autofill_emotion,\n"
+              ")\n",
+              "emotion routing import",
+          )
+
+          replace_once(
+              '''        translation_enabled = self.config.get("enable_translation", True)\n        translation_workflow = self._get_translation_workflow()\n\n        if translation_enabled and translation_workflow == "provider_translation":\n            target_text = await self._translate_text_with_backends(display_text)\n        elif tagged_translation:\n            target_text = tagged_translation\n        else:\n            target_text = display_text\n''',
+              '''        translation_enabled = self.config.get("enable_translation", True)\n        translation_workflow = self._get_translation_workflow()\n        settings = self.config.get("llm_injection_settings", {})\n        session_setting = self.session_emotions.get(session_id)\n        has_manual_tool_emotion = bool(emotion_name) or bool(\n            session_setting and session_setting.get("character") == char_name\n        )\n        provider_emotion_autofill = should_provider_autofill_emotion(\n            enabled=bool(\n                translation_enabled\n                and settings.get("enable_provider_emotion_autofill", False)\n            ),\n            translation_workflow=translation_workflow,\n            has_manual_emotion=has_manual_tool_emotion,\n            has_injected_emotion=False,\n            w_mode_active=False,\n        )\n\n        if translation_enabled and translation_workflow == "provider_translation":\n            target_text = None\n            if provider_emotion_autofill:\n                character_emotions = list(\n                    self.emotion_manager.emotions_data[char_name].keys()\n                )\n                target_text, provider_emotion = (\n                    await self._translate_text_and_pick_emotion_with_backends(\n                        display_text, character_emotions\n                    )\n                )\n                if provider_emotion:\n                    resolved_emotion = provider_emotion\n                    emotion_data = self.emotion_manager.get_emotion_data(\n                        char_name, resolved_emotion\n                    )\n                    logger.info(\n                        f"[{session_id}] LLM工具 Provider自动补判情感: "\n                        f"{char_name} - {resolved_emotion}"\n                    )\n\n            if not target_text:\n                target_text = await self._translate_text_with_backends(display_text)\n        elif tagged_translation:\n            target_text = tagged_translation\n        else:\n            target_text = display_text\n''',
+              "LLM tool provider translation block",
+          )
+
+          replace_once(
+              '''        # 确定角色：与工具调用、Prompt 注入共用同一解析逻辑。\n        char_name, _, _ = self._resolve_tts_profile(session_id)\n        session_setting = self.session_emotions.get(session_id)\n        if session_id not in self.w_active_sessions and not injected_emotion:\n            target_emotion = (\n                session_setting["emotion"]\n                if session_setting\n                else self._get_default_emotion_for_character(char_name)\n            )\n            emotion_source = "会话固定情感" if session_setting else "角色默认情感"\n\n        if not char_name or not self.emotion_manager.character_exists(char_name):\n''',
+              '''        # 确定角色：与工具调用、Prompt 注入共用同一解析逻辑。\n        char_name, _, _ = self._resolve_tts_profile(session_id)\n        session_setting = self.session_emotions.get(session_id)\n        provider_emotion_autofill = should_provider_autofill_emotion(\n            enabled=bool(\n                self.config.get("enable_translation", True)\n                and settings.get("enable_provider_emotion_autofill", False)\n            ),\n            translation_workflow=translation_workflow,\n            has_manual_emotion=bool(session_setting),\n            has_injected_emotion=bool(enable_llm_emotion and injected_emotion),\n            w_mode_active=session_id in self.w_active_sessions,\n        )\n\n        if session_setting:\n            target_emotion = session_setting["emotion"]\n            emotion_source = "会话固定情感"\n        elif enable_llm_emotion and injected_emotion:\n            target_emotion = injected_emotion\n            emotion_source = "LLM情感标签"\n        elif not provider_emotion_autofill:\n            target_emotion = self._get_default_emotion_for_character(char_name)\n            emotion_source = "角色默认情感"\n\n        if not char_name or not self.emotion_manager.character_exists(char_name):\n''',
+              "automatic TTS emotion priority block",
+          )
+
+          replace_once(
+              '''        # 确定情感\n        if enable_llm_emotion and injected_emotion:\n            target_emotion = injected_emotion\n            emotion_source = "LLM情感标签"\n        elif enable_llm_emotion and not injected_emotion:\n            logger.info(\n                f"[{session_id}] 已开启LLM情感标签，但本轮回复未解析到 [emotion=xxx]，"\n                "将使用会话固定/默认情感。请确认角色已注册情感、且情感提示词包含 {emotions} 占位符。"\n            )\n\n''',
+              '''        # 确定情感。显式会话情感优先于主 LLM 标签；缺失时才允许 Provider 补判。\n        if session_setting and enable_llm_emotion and injected_emotion:\n            logger.info(\n                f"[{session_id}] 同时存在会话固定情感和 LLM 情感标签，"\n                "已按优先级保留会话固定情感。"\n            )\n        elif enable_llm_emotion and not injected_emotion and not session_setting:\n            fallback_note = (\n                "将交给 Provider 自动补判情感。"\n                if provider_emotion_autofill\n                else "将使用角色默认情感。"\n            )\n            logger.info(\n                f"[{session_id}] 已开启LLM情感标签，但本轮回复未解析到 [emotion=xxx]，"\n                f"{fallback_note}请确认角色已注册情感、且情感提示词包含 {{emotions}} 占位符。"\n            )\n\n''',
+              "automatic TTS emotion logging block",
+          )
+
+          replace_once(
+              '''            if translation_workflow == "provider_translation":\n                # provider 模式下，自动情感识别可由独立翻译 Provider 一并完成。\n                if session_id in self.w_active_sessions and not target_emotion:\n                    character_emotions = list(\n                        self.emotion_manager.emotions_data[char_name].keys()\n                    )\n                    target_text, target_emotion = (\n                        await self._translate_text_and_pick_emotion_with_backends(\n                            original_text, character_emotions\n                        )\n                    )\n                    if target_emotion:\n                        emotion_source = "翻译Provider情感识别"\n\n                if not target_text:\n''',
+              '''            if translation_workflow == "provider_translation":\n                # /tts-w 或新开关可让翻译 Provider 在缺少显式情感时顺便补判。\n                if provider_emotion_autofill and not target_emotion:\n                    character_emotions = list(\n                        self.emotion_manager.emotions_data[char_name].keys()\n                    )\n                    target_text, target_emotion = (\n                        await self._translate_text_and_pick_emotion_with_backends(\n                            original_text, character_emotions\n                        )\n                    )\n                    if target_emotion:\n                        emotion_source = (\n                            "翻译Provider情感识别"\n                            if session_id in self.w_active_sessions\n                            else "Provider自动补判情感"\n                        )\n\n                if not target_text:\n''',
+              "provider translation emotion inference block",
+          )
+
+          path.write_text(source, encoding="utf-8")
+          print("patched main.py")
+          PY
+      - name: Commit patch
+        shell: bash
+        run: |
+          if git diff --quiet -- main.py; then
+            echo "No patch needed"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add main.py
+          git commit -m "feat: wire provider translation emotion autofill"
+          git push origin HEAD:feat/provider-translation-emotion-autofill
