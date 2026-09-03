@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 
+# Regression guard for AstrBot/provider-injected transport metadata such as _ref.
 class LlmToolExtraMetadataTests(unittest.TestCase):
     def test_genie_tts_speak_accepts_unknown_tool_metadata(self):
         main_path = Path(__file__).resolve().parents[1] / "main.py"
