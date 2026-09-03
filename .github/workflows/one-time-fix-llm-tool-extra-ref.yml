@@ -28,28 +28,21 @@ jobs:
 
           path = Path('main.py')
           text = path.read_text(encoding='utf-8')
-          old = '''    async def llm_tool_genie_tts_speak(
-              self,
-              event: AstrMessageEvent,
-              text: str,
-              character_name: Optional[str] = None,
-              emotion_name: Optional[str] = None,
-          ) -> str:
-          '''
-          new = '''    async def llm_tool_genie_tts_speak(
-              self,
-              event: AstrMessageEvent,
-              text: str,
-              character_name: Optional[str] = None,
-              emotion_name: Optional[str] = None,
-              **_extra_tool_kwargs,
-          ) -> str:
-          '''
-          if old not in text:
-              raise SystemExit('Expected genie_tts_speak signature not found; refusing broad edit')
-          text = text.replace(old, new, 1)
-          path.write_text(text, encoding='utf-8')
+          old = '''        emotion_name: Optional[str] = None,
+              ) -> str:
+                  """在当前会话中直接发送一条 TTS 语音。'''
+          new = '''        emotion_name: Optional[str] = None,
+                  **_extra_tool_kwargs,
+              ) -> str:
+                  """在当前会话中直接发送一条 TTS 语音。'''
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f'Expected exactly one genie_tts_speak signature tail, found {count}')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
           PY
+
+      - name: Compile plugin entrypoint
+        run: python -m py_compile main.py
 
       - name: Run full plugin regression suite
         run: python -m unittest discover -s tests -v
