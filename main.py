@@ -905,6 +905,7 @@ class GenieTtsLlmPlugin(Star):
         text: str,
         character_name: Optional[str] = None,
         emotion_name: Optional[str] = None,
+        **_extra_tool_kwargs,
     ) -> str:
         """在当前会话中直接发送一条 TTS 语音。
 
