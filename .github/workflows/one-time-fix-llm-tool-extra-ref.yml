@@ -1,0 +1,64 @@
+name: One-time LLM tool extra metadata fix
+
+on:
+  push:
+    branches:
+      - fix/llm-tool-extra-ref
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/llm-tool-extra-ref
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Apply minimal compatibility fix
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('main.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''    async def llm_tool_genie_tts_speak(
+              self,
+              event: AstrMessageEvent,
+              text: str,
+              character_name: Optional[str] = None,
+              emotion_name: Optional[str] = None,
+          ) -> str:
+          '''
+          new = '''    async def llm_tool_genie_tts_speak(
+              self,
+              event: AstrMessageEvent,
+              text: str,
+              character_name: Optional[str] = None,
+              emotion_name: Optional[str] = None,
+              **_extra_tool_kwargs,
+          ) -> str:
+          '''
+          if old not in text:
+              raise SystemExit('Expected genie_tts_speak signature not found; refusing broad edit')
+          text = text.replace(old, new, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Run full plugin regression suite
+        run: python -m unittest discover -s tests -v
+
+      - name: Commit verified fix and remove one-time workflow
+        run: |
+          rm .github/workflows/one-time-fix-llm-tool-extra-ref.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add main.py .github/workflows/one-time-fix-llm-tool-extra-ref.yml
+          git commit -m "fix: tolerate extra LLM tool metadata"
+          git push origin HEAD:fix/llm-tool-extra-ref
