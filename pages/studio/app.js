@@ -529,7 +529,7 @@ function tabBadge(id) {
   if (id === "commands") return { text: String((o.counts && o.counts.commands) || 0), tone: null };
   if (id === "sessions") {
     var s = o.session || {};
-    var n = (s.active_sessions ? s.active_sessions.length : 0) + (s.w_active_sessions ? s.w_active_sessions.length : 0);
+    var n = Number(s.known_sessions) || 0;
     return n ? { text: String(n), tone: null } : null;
   }
   /* 日志页的角标直接摆「值得看一眼的条数」：优先失败/跳过，其次 WARNING 以上。 */
@@ -621,6 +621,7 @@ function go(tab) {
   if (!VIEWS[tab]) tab = "studio";
   var changed = state.tab !== tab;
   state.tab = tab;
+  if (changed && (tab === "sessions" || tab === "logs")) state.loaded[tab] = false;
   TABS.forEach(function (t) {
     var v = viewNode(t.id);
     if (v) v.hidden = t.id !== tab;
@@ -628,6 +629,7 @@ function go(tab) {
     if (b) b.setAttribute("aria-selected", t.id === tab ? "true" : "false");
   });
   if (changed) scrollTopSafe();
+  if (changed && tab !== "logs") stopLogAudio();
   savePrefs();
   if (LOADERS[tab] && !state.loaded[tab]) {
     busyView(tab, "正在读取数据…");
@@ -3705,7 +3707,7 @@ function openSessionForm(scope) {
   if (!isGroup) {
     rows.push(field({
       label: "开关类型",
-      desc: "自动配音 = 普通 TTS；W 模式 = 旁白 / 心声风格的第二套音色。",
+      desc: "普通配音跟随默认或指定音色；自动情感（W）按文本选情感。关闭单独设置后仍可能继承群配置。",
       control: segment([{ value: "tts", label: "自动配音" }, { value: "w", label: "W 模式" }], st.kind, function (v) {
         st.kind = v;
         toast(v === "w" ? "将切换 W 模式" : "将切换自动配音", null, 1400);
@@ -3735,92 +3737,81 @@ function renderSessions() {
   var v = clear(viewNode("sessions"));
   var d = state.sessions;
   if (!d) { v.appendChild(empty("会话状态还没加载", "点右上角「刷新」重试。")); return; }
-
-  var rows = d.sessions || [];
-  var groups = d.groups || { active: [], inactive: [] };
+  var rows = d.sessions || [], rules = d.group_rules || [];
+  var groups = d.groups || {}, counts = d.counts || {};
   var busy = !!state.busy.sessions;
-  var ttsOn = rows.filter(function (r) { return r.tts_active; }).length;
-  var wOn = rows.filter(function (r) { return r.w_active; }).length;
-
+  function sourceBadges(sources) {
+    return h("div", { class: "chips" }, (sources || []).map(function (s) { return badge(s, "mute"); }));
+  }
+  function statusBadge(status) {
+    return badge(status.blocked ? "已禁用" : status.enabled ? "已开启" : "未开启", status.blocked ? "danger" : status.enabled ? "ok" : "mute");
+  }
   v.appendChild(card({
-    kicker: "SESSIONS",
-    title: "会话与开关",
-    desc: "这里的开关等价于在对应会话里发 /tts-llm、/tts-q、/tts-w 这些指令，改完立刻生效。",
+    kicker: "SESSIONS", title: "会话与生效来源",
+    desc: "配置和指令都能开启配音。群设置覆盖整群；/tts-llm、/tts-w 设置当前会话。这里同时显示群规则和已识别会话。",
     tools: [
       btn("指定会话", { sm: true, kind: "soft", onclick: function () { openSessionForm("session"); } }),
       btn("指定群", { sm: true, kind: "soft", onclick: function () { openSessionForm("group"); } }),
       btn("刷新", { sm: true, kind: "ghost", onclick: function () { reloadTab("sessions"); } })
     ],
-    body: [
-      h("div", { class: "stat-grid" }, [
-        stat(String(ttsOn), "自动配音开启", ttsOn ? "ok" : null),
-        stat(String(wOn), "W 模式开启", wOn ? "accent" : null),
-        stat(String((groups.active || []).length), "白名单群"),
-        stat(String((groups.inactive || []).length), "黑名单群")
-      ]),
-      kv([
-        ["状态持久化", d.persistence ? "已开启（重启后保留）" : "已关闭（重启即清空）"],
-        ["群聊默认", d.group_default ? "默认开启，黑名单里的群除外" : "默认关闭，只有白名单群会配音"]
-      ])
-    ]
+    body: [h("div", { class: "stat-grid" }, [
+      stat(String(counts.effective || 0), "实际开启的已知会话", "ok"),
+      stat(String(counts.groups_enabled || 0), "已知开启群", "accent"),
+      stat(String((groups.whitelist || []).length), "配置白名单群"),
+      stat(String((groups.blacklist || []).length), "配置禁用群")
+    ]), kv([
+      ["群聊默认", d.group_default ? "全部群默认开启（含尚未识别的群）" : "按白名单或单独开关开启"],
+      ["状态持久化", d.persistence ? "已开启，重启保留开关和会话记录" : "已关闭，重启清空单独开关和会话记录；配置仍保留"],
+      ["配音触发", "已开启表示允许自动配音；每次是否生成仍由触发频率、LLM 回复和音色配置决定。"]
+    ])]
   }));
 
-  /* ---------- 会话表 ---------- */
-  var t = table(["会话 ID", "自动配音", "W 模式", "音色", "W 音色", { label: "操作", class: "acts" }]);
-  if (!rows.length) {
-    t.body.appendChild(h("tr", {}, h("td", { colspan: 6 }, empty("暂时没有活跃会话", "在任意聊天里发一次 /tts-llm 就会出现在这里。"))));
-  }
-  rows.forEach(function (r) {
-    var voice = r.character ? (r.character + " · " + (r.emotion || "—")) : "";
-    var wVoice = r.w_character ? (r.w_character + " · " + (r.w_emotion || "—")) : "";
-    var acts = h("td", { class: "acts" });
-    if (r.has_last_audio) acts.appendChild(badge("有上条语音", "mute"));
-    acts.appendChild(btn("复制 ID", { sm: true, kind: "ghost", onclick: function () { copyText(r.session_id, "会话 ID"); } }));
-    t.body.appendChild(h("tr", {}, [
-      h("td", {}, h("span", { class: "cell-path", title: r.session_id, text: shorten(r.session_id, 46) })),
-      h("td", {}, switchBox(r.tts_active, r.tts_active ? "开" : "关", function (ev) {
-        if (busy) { ev.target.checked = r.tts_active; return; }
-        toggleSession(r.session_id, "session", "tts", !!ev.target.checked);
-      })),
-      h("td", {}, switchBox(r.w_active, r.w_active ? "开" : "关", function (ev) {
-        if (busy) { ev.target.checked = r.w_active; return; }
-        toggleSession(r.session_id, "session", "w", !!ev.target.checked);
-      })),
-      h("td", {}, voice ? h("span", { text: voice }) : dim("跟随默认")),
-      h("td", {}, wVoice ? h("span", { text: wVoice }) : dim("跟随默认")),
-      acts
+  var gt = table(["群号", "群级配音", "生效来源", { label: "群开关", class: "acts" }]);
+  if (!rules.length) gt.body.appendChild(h("tr", {}, h("td", { colspan: 4 }, empty(
+    d.group_default ? "全部群默认开启" : "尚未配置指定群",
+    d.group_default ? "群聊触发 LLM 后会自动记录群号；无需先发开启指令。" : "在配置中添加群白名单，或用「指定群」及 /ttg 开启。"
+  ))));
+  rules.forEach(function (g) {
+    gt.body.appendChild(h("tr", {}, [
+      h("td", { class: "mono", text: g.group_id }), h("td", {}, statusBadge(g)),
+      h("td", {}, sourceBadges(g.sources)), h("td", { class: "acts" }, btn(g.enabled ? "关闭群配音" : "开启群配音", {
+        sm: true, kind: "ghost", disabled: busy || g.blocked,
+        title: g.blocked ? "请先从配置群黑名单移除" : "等价于 /ttg 或 /ttg-q，只调整群级配音",
+        onclick: function () { toggleSession(g.group_id, "group", "tts", !g.enabled); }
+      }))
     ]));
   });
-  v.appendChild(card({ kicker: "LIVE", title: "活跃会话 " + rows.length, body: t, sub: true }));
+  v.appendChild(card({ kicker: "GROUP RULES", title: "群配置与开关 · " + rules.length,
+    desc: "白名单、配置禁用群和手动群开关直接显示，无需先聊天。群级关闭后，会话单独开启仍有效；配置黑名单优先禁用。", body: gt, sub: true }));
 
-  /* ---------- 群名单 ---------- */
-  function groupChips(names, active) {
-    var box = h("div", { class: "chips" });
-    if (!names.length) { box.appendChild(dim("空")); return box; }
-    names.forEach(function (n) {
-      box.appendChild(h("button", {
-        type: "button", class: "chip chip-btn", "aria-pressed": active ? "true" : "false",
-        title: active ? "点一下移出白名单" : "点一下移出黑名单",
-        text: n,
-        onclick: function () { toggleSession(n, "group", "tts", !active); }
-      }));
-    });
-    return box;
-  }
-  v.appendChild(card({
-    kicker: "GROUPS",
-    title: "群聊名单",
-    desc: "白名单 = 明确开启配音的群；黑名单 = 明确关闭的群。点一下标签就翻到另一边。",
-    body: [
-      field({ label: "白名单（/ttg）", control: groupChips(groups.active || [], true) }),
-      field({ label: "黑名单（/ttg-q）", control: groupChips(groups.inactive || [], false) })
-    ],
-    sub: true
-  }));
-
-  if (!d.persistence) {
-    v.appendChild(note("状态持久化已关闭，AstrBot 重启后这里的开关会全部清空。想保留就去「配置 → 防护」打开 enable_state_persistence。", "warn"));
-  }
+  var t = table(["会话 / 最近识别", "实际自动配音", "生效来源", "单独普通配音", "单独自动情感", "会话音色", { label: "操作", class: "acts" }]);
+  if (!rows.length) t.body.appendChild(h("tr", {}, h("td", { colspan: 7 }, empty("尚无已识别会话",
+    "上方群配置已可生效。让 bot 正常回复一次，刷新后会自动出现在这里，无需 /tts-llm。旧版未保存的历史会话无法补回。"
+  ))));
+  rows.forEach(function (r) {
+    var e = r.effective || { enabled: r.tts_active || r.w_active };
+    var normalVoice = r.character ? r.character + " · " + (r.emotion || "默认情感") : "跟随默认";
+    var wVoice = r.w_character || "跟随默认角色";
+    function sessionSwitch(kind, checked) {
+      var box = switchBox(checked, checked ? "已设定" : "未设定", function (ev) {
+        if (busy || e.blocked) { ev.target.checked = checked; return; }
+        toggleSession(r.session_id, "session", kind, !!ev.target.checked);
+      });
+      var control = box.querySelector("input");
+      if (control) control.disabled = busy || e.blocked;
+      return box;
+    }
+    t.body.appendChild(h("tr", {}, [
+      h("td", {}, [h("span", { class: "cell-path", title: r.session_id, text: shorten(r.session_id, 42) }),
+        h("div", { class: "tiny dim", text: r.last_seen ? fmtTime(r.last_seen * 1000) : "等待真实会话识别" })]),
+      h("td", {}, statusBadge(e)), h("td", {}, sourceBadges(e.sources)),
+      h("td", {}, sessionSwitch("tts", r.tts_active)), h("td", {}, sessionSwitch("w", r.w_active)),
+      h("td", {}, [h("div", { text: "普通：" + normalVoice }), h("div", { class: "tiny dim", text: "自动情感：" + wVoice })]),
+      h("td", { class: "acts" }, btn("复制 ID", { sm: true, kind: "ghost", onclick: function () { copyText(r.session_id, "会话 ID"); } }))
+    ]));
+  });
+  v.appendChild(card({ kicker: "OBSERVED", title: "已识别与已设置会话 · " + rows.length,
+    desc: "单独开关「未设定」时仍可继承群设置，以「实际自动配音」为准。普通与自动情感模式互斥。最近会话最多保留 " + (d.known_limit || 500) + " 条，单独设置另行保留。", body: t, sub: true }));
 }
 
 /* ============================================================ 指令表 */
@@ -4138,6 +4129,74 @@ function toggleSynthRec(id) {
   } catch (e5) {}
 }
 
+var logAudioSeq = 0, logAudioUrl = "", logAudioElement = null;
+function logAudioLabel(info) {
+  return ({ cleared: "已清理", expired: "记录已过期", not_generated: "未生成音频", unavailable: "音频不可用" })[info && info.state] || "音频不可用";
+}
+function stopLogAudio() {
+  logAudioSeq++;
+  if (logAudioElement) { try { logAudioElement.pause(); logAudioElement.removeAttribute("src"); logAudioElement.load(); } catch (e) {} }
+  logAudioElement = null;
+  if (logAudioUrl) { URL.revokeObjectURL(logAudioUrl); logAudioUrl = ""; }
+  var dock = $("log-audio-dock");
+  if (dock) { clear(dock); dock.hidden = true; }
+}
+function logAudioControl(info) {
+  if (!info) return null;
+  var box = h("div", { class: "log-audio-control" });
+  if (info.state !== "available") { append(box, badge(logAudioLabel(info), "mute")); return box; }
+  append(box, btn("试听语音", { sm: true, kind: "soft", title: "播放这次合成的原文件，不重新合成", onclick: function () { playLogAudio(info, box); } }));
+  return box;
+}
+function playLogAudio(info, control) {
+  stopLogAudio();
+  var seq = logAudioSeq;
+  var dock = $("log-audio-dock");
+  if (!dock) {
+    dock = h("section", { id: "log-audio-dock", class: "log-audio-dock", "aria-label": "日志语音试听" });
+    D.body.appendChild(dock);
+  }
+  dock.hidden = false;
+  var label = h("span", { class: "tiny", text: "正在读取语音 #" + info.id + "…" });
+  var playerBox = h("div", { class: "log-audio-player" });
+  append(dock, [label, playerBox, btn("关闭试听", { sm: true, kind: "ghost", onclick: stopLogAudio })]);
+  var chunks = [], total = 0;
+  function read(offset) {
+    if (seq !== logAudioSeq) return Promise.resolve();
+    return apiGet("logs/audio", { id: info.id, instance: info.instance, offset: offset }).then(function (d) {
+      if (seq !== logAudioSeq) return;
+      if (d.state !== "available") {
+        info.state = d.state;
+        clear(control); append(control, badge(logAudioLabel(d), "mute"));
+        label.textContent = "语音 #" + info.id + " · " + logAudioLabel(d);
+        chunks = [];
+        return;
+      }
+      if (d.bytes > 256 * 1024 * 1024) throw new Error("文件超过浏览器试听上限（256 MB）");
+      var raw = atob(d.audio_base64 || ""), bytes = new Uint8Array(raw.length);
+      for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+      if (!bytes.length || d.offset !== offset || d.next_offset !== offset + bytes.length) throw new Error("音频读取不完整，请重试");
+      if (total && total !== d.bytes) throw new Error("音频文件已变化，请刷新后重试");
+      total = d.bytes; chunks.push(bytes);
+      label.textContent = "语音 #" + info.id + " · 已读取 " + fmtBytes(d.next_offset) + " / " + fmtBytes(total);
+      if (!d.done) return read(d.next_offset);
+      if (d.next_offset !== total) throw new Error("音频读取不完整，请重试");
+      logAudioUrl = URL.createObjectURL(new Blob(chunks, { type: d.mime || "audio/wav" }));
+      chunks = [];
+      logAudioElement = h("audio", { controls: true, preload: "metadata", src: logAudioUrl });
+      append(playerBox, logAudioElement);
+      label.textContent = "语音 #" + info.id + " · 原始音频";
+      var played = logAudioElement.play();
+      if (played && played.catch) played.catch(function () { if (seq === logAudioSeq) label.textContent = "语音 #" + info.id + " · 点击播放键试听"; });
+    });
+  }
+  read(0).catch(function (e) {
+    if (seq !== logAudioSeq) return;
+    label.textContent = "试听失败：" + (e.message || String(e));
+    chunks = [];
+  });
+}
+
 function synthRec(r) {
   var u = state.logsUI;
   var open = !!u.expanded[r.id];
@@ -4155,6 +4214,7 @@ function synthRec(r) {
   ]);
   var wrap = h("div", { class: "log-rec", "data-status": r.status || null, "data-rec": String(r.id) }, head);
   u.recNodes[String(r.id)] = wrap;
+  append(wrap, logAudioControl(r.audio));
   if (!open) {
     var brief = r.llm_text || r.tts_text || r.display_text || r.reason || "";
     if (brief) wrap.appendChild(h("p", { class: "log-rec-text", title: brief, text: shorten(brief, 170) }));
@@ -4353,7 +4413,8 @@ function renderLogList(v, L, lf) {
         class: "log-msg",
         title: String(it.message || "") + (it.session ? "  ·  会话 " + it.session : "")
       }, paintLogText(it.message)),
-      h("span", { class: "log-src mono", text: it.source || "" })
+      h("span", { class: "log-src mono", text: it.source || "" }),
+      logAudioControl(it.audio)
     ]));
   });
   v.appendChild(card({
@@ -4457,7 +4518,7 @@ function renderLogs() {
   v.appendChild(card({
     kicker: "LOGS",
     title: "运行日志与合成追踪",
-    desc: "每次配音都留一条记录：LLM 原话、真正送进 TTS 的文本、命中的情感和它是谁定的、耗时与失败原因。想知道「哪些情感不好」就翻到情感统计。",
+    desc: "每次配音都留一条记录：LLM 原话、真正送进 TTS 的文本、命中的情感和它是谁定的、耗时与失败原因。可直接试听这次生成的原音频，文件过期显示「已清理」。想知道「哪些情感不好」就翻到情感统计。",
     tools: tools,
     body: [
       h("div", { class: "stat-grid" }, [
@@ -4543,6 +4604,7 @@ var ENDPOINTS = [
   ["会话", "GET", "sessions", "活跃会话与群名单"],
   ["会话", "POST", "sessions/toggle", "切换会话 / 群开关"],
   ["日志", "GET", "logs", "运行日志（支持级别 / 分类 / 关键词）"],
+  ["日志", "GET", "logs/audio", "试听合成记录的原始音频"],
   ["日志", "GET", "logs/synths", "合成记录与情感统计"],
   ["日志", "POST", "logs/clear", "清空日志缓冲"],
   ["日志", "GET", "logs/export", "导出日志纯文本"],
@@ -4663,10 +4725,10 @@ function renderAbout() {
     kicker: "SESSION",
     title: "当前会话规模",
     body: kv([
-      ["自动配音会话", String(ss.active_sessions || 0)],
+      ["单独普通配音会话", String(ss.active_sessions || 0)],
       ["W 模式会话", String(ss.w_active_sessions || 0)],
-      ["白名单群", String(ss.active_groups || 0)],
-      ["黑名单群", String(ss.inactive_groups || 0)],
+      ["已知开启群", String(ss.active_groups || 0)],
+      ["单独关闭群", String(ss.inactive_groups || 0)],
       ["记住音色的会话", String(ss.session_emotions || 0)],
       ["状态持久化", onoff(tg.state_persistence)],
       ["群聊默认开启", onoff(tg.group_default)],

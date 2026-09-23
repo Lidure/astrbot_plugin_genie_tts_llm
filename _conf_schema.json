@@ -2,14 +2,14 @@
   "enable_group_tts_by_default": {
     "title": "默认开启全部群语音",
     "description": "所有群默认开启",
-    "hint": "开启后无需配置群组白名单或执行 /ttg。群组黑名单仍优先；/ttg-q 可临时关闭当前群，插件重启后恢复默认。",
+    "hint": "开启后无需配置群组白名单或执行 /ttg。群组黑名单仍优先；/ttg-q 关闭群级配音，开启状态持久化时重启保留。",
     "type": "bool",
     "default": false
   },
   "group_whitelist": {
     "title": "群组白名单",
-    "description": "启动时自动开启",
-    "hint": "当“默认开启全部群语音”关闭时生效。填写群号，例如：123456789。",
+    "description": "保存后实时生效",
+    "hint": "指定群自动配音，无需 /ttg。保存后实时生效；单独关闭与黑名单优先。填写群号，例如：123456789。",
     "type": "list",
     "items": {
       "type": "string"

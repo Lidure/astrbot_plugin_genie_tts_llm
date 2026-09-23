@@ -34,6 +34,7 @@ from . import audio_compat
 from . import emotion_pack
 from . import run_log as run_log_mod
 from . import voice_vault
+from . import session_state
 from .emotion_pack import EmotionPackError
 from .voice_vault import VoiceVaultError
 from .tts_engine import (
@@ -285,10 +286,10 @@ COMMAND_TABLE: Tuple[Dict[str, str], ...] = (
     {"group": "开关", "usage": "/tts-q", "alias": "关闭语音合成", "desc": "关闭当前会话的自动配音"},
     {"group": "开关", "usage": "/ttg", "alias": "开启群语音", "desc": "开启本群自动配音（仅群聊）"},
     {"group": "开关", "usage": "/ttg-q", "alias": "关闭群语音", "desc": "关闭本群自动配音（仅群聊）"},
-    {"group": "开关", "usage": "/tts-w", "alias": "开启自动情感识别", "desc": "开启 W 模式（旁白/心声风格）"},
+    {"group": "开关", "usage": "/tts-w", "alias": "开启自动情感识别", "desc": "开启当前会话的自动情感模式"},
     {"group": "开关", "usage": "/tts-w-q", "alias": "关闭自动情感识别", "desc": "关闭 W 模式"},
     {"group": "音色", "usage": "/sw 角色 感情", "alias": "切换感情", "desc": "切换当前会话的角色与感情"},
-    {"group": "音色", "usage": "/sw-w 角色", "alias": "切换w角色", "desc": "切换 W 模式使用的角色与感情"},
+    {"group": "音色", "usage": "/sw-w 角色", "alias": "切换w角色", "desc": "切换自动情感模式使用的角色"},
     {"group": "音色", "usage": "/注册感情 角色 感情 相对路径 参考文本 [语言]", "alias": "", "desc": "登记一条参考音频"},
     {"group": "音色", "usage": "/删除感情 角色 感情", "alias": "", "desc": "删除一条参考音频"},
     {"group": "音色", "usage": "/查看感情 [角色]", "alias": "", "desc": "列出已登记的角色与感情"},
@@ -462,6 +463,7 @@ class GenieWebApi:
             ("prefs", "GET", "_handle_prefs", "读取界面偏好"),
             ("prefs/save", "POST", "_handle_prefs_save", "保存界面偏好"),
             ("logs", "GET", "_handle_logs", "运行日志"),
+            ("logs/audio", "GET", "_handle_log_audio", "试听合成记录的原始音频"),
             ("logs/synths", "GET", "_handle_synth_logs", "合成记录与情感统计"),
             ("logs/clear", "POST", "_handle_logs_clear", "清空日志缓冲"),
             ("logs/export", "GET", "_handle_logs_export", "下载日志文本"),
@@ -628,6 +630,7 @@ class GenieWebApi:
             engine = getattr(self.plugin, "tts_engine", None)
             stats = dict(getattr(engine, "stats", {}) or {})
             config = self.plugin.config
+            sessions = session_state.session_payload(self.plugin)
 
             payload = {
                 "plugin": {
@@ -704,7 +707,9 @@ class GenieWebApi:
                 "session": {
                     "active_sessions": len(getattr(self.plugin, "active_sessions", ()) or ()),
                     "w_active_sessions": len(getattr(self.plugin, "w_active_sessions", ()) or ()),
-                    "active_groups": len(getattr(self.plugin, "active_groups", ()) or ()),
+                    "active_groups": sessions["counts"]["groups_enabled"],
+                    "known_sessions": sessions["counts"]["known"],
+                    "effective_sessions": sessions["counts"]["effective"],
                     "inactive_groups": len(getattr(self.plugin, "inactive_groups", ()) or ()),
                     "session_emotions": len(getattr(self.plugin, "session_emotions", ()) or ()),
                 },
@@ -1635,22 +1640,29 @@ class GenieWebApi:
                 body["language"] = _as_text(entry.get("language"))
 
         language = _as_text(body.get("language")) or None
+        log = self._run_log()
+        trace = log.begin_synth("webui", session="webui:studio", character=character,
+                                emotion=emotion, tts_text=text, ref_audio=ref_path,
+                                ref_text=ref_text, language=language) if log else run_log_mod.NULL_TRACE
         started = time.perf_counter()
         try:
             audio_path = await engine.synthesize(
                 character, ref_path, ref_text, text, "webui:studio", language
             )
         except Exception as exc:
+            trace.fail(str(exc))
             logger.error("Genie TTS WebUI 合成异常: " + str(exc))
             return self._err("合成异常: " + str(exc))
         elapsed = time.perf_counter() - started
 
         if not audio_path or not os.path.exists(audio_path):
+            trace.fail("服务器未返回有效音频")
             return self._err(
                 "合成失败：文本可能没有可发音内容，或服务器未返回音频。"
                 "先用分段预览确认文本，再到服务器页看探测结果。"
             )
 
+        trace.ok(audio_path=audio_path)
         try:
             size = os.path.getsize(audio_path)
         except OSError:
@@ -1922,46 +1934,8 @@ class GenieWebApi:
     # ------------------------------------------------------------ 会话
 
     async def _handle_sessions(self):
-        plugin = self.plugin
-        rows: List[Dict[str, Any]] = []
-        session_ids = set()
-        session_ids.update(getattr(plugin, "active_sessions", set()) or set())
-        session_ids.update(getattr(plugin, "w_active_sessions", set()) or set())
-        session_ids.update((getattr(plugin, "session_emotions", {}) or {}).keys())
-        session_ids.update((getattr(plugin, "session_w_settings", {}) or {}).keys())
-
-        for session_id in sorted(str(item) for item in session_ids):
-            profile = (getattr(plugin, "session_emotions", {}) or {}).get(session_id) or {}
-            w_profile = (getattr(plugin, "session_w_settings", {}) or {}).get(session_id) or {}
-            rows.append(
-                {
-                    "session_id": session_id,
-                    "tts_active": session_id in (getattr(plugin, "active_sessions", set()) or set()),
-                    "w_active": session_id in (getattr(plugin, "w_active_sessions", set()) or set()),
-                    "character": _as_text(profile.get("character")),
-                    "emotion": _as_text(profile.get("emotion")),
-                    "w_character": _as_text(w_profile.get("character")),
-                    "w_emotion": _as_text(w_profile.get("emotion")),
-                    "has_last_audio": bool(
-                        getattr(plugin, "has_sent_voice", lambda _s: False)(session_id)
-                    ),
-                    "sent_voices": _as_int(
-                        getattr(plugin, "sent_voice_count", lambda _s: 0)(session_id), 0
-                    ),
-                }
-            )
-
-        return self._ok(
-            {
-                "sessions": rows,
-                "groups": {
-                    "active": sorted(str(item) for item in (getattr(plugin, "active_groups", set()) or set())),
-                    "inactive": sorted(str(item) for item in (getattr(plugin, "inactive_groups", set()) or set())),
-                },
-                "persistence": _as_bool(plugin.config.get("enable_state_persistence"), True),
-                "group_default": _as_bool(plugin.config.get("enable_group_tts_by_default")),
-            }
-        )
+        await self.plugin._state_restored.wait()
+        return self._ok(session_state.session_payload(self.plugin))
 
     async def _handle_session_toggle(self):
         body = await self._read_body()
@@ -1973,6 +1947,9 @@ class GenieWebApi:
             return self._err("会话 ID / 群号不能为空")
 
         plugin = self.plugin
+        await plugin._state_restored.wait()
+        if scope not in ("group", "session") or kind not in ("tts", "w"):
+            return self._err("未知的开关范围或模式")
         if scope == "group":
             group_id = plugin._normalize_group_id(target)
             if not group_id:
@@ -1986,11 +1963,13 @@ class GenieWebApi:
         elif kind == "w":
             if enabled:
                 plugin.w_active_sessions.add(target)
+                plugin.active_sessions.discard(target)
             else:
                 plugin.w_active_sessions.discard(target)
         else:
             if enabled:
                 plugin.active_sessions.add(target)
+                plugin.w_active_sessions.discard(target)
             else:
                 plugin.active_sessions.discard(target)
 
@@ -2667,6 +2646,67 @@ class GenieWebApi:
             "search": _as_text(self._query("search"), 200),
         }
 
+    def _log_audio_info(self, record: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        log = self._run_log()
+        info = {"id": record["id"] if record else 0,
+                "instance": log.instance_id if log else "", "state": "not_generated"}
+        if record is None:
+            return {**info, "state": "expired"}
+        raw = record.get("audio_path")
+        if not raw:
+            return info
+        root = getattr(getattr(self.plugin, "tts_engine", None), "temp_audio_dir", None)
+        if not root:
+            return {**info, "state": "unavailable"}
+        try:
+            path, base = Path(raw).resolve(), Path(root).resolve()
+            if not path.is_relative_to(base) or path.suffix.lower() != ".wav":
+                return {**info, "state": "unavailable"}
+            size = path.stat().st_size
+            if not path.is_file() or not size:
+                return {**info, "state": "unavailable"}
+            return {**info, "state": "available", "bytes": size, "mime": "audio/wav"}
+        except FileNotFoundError:
+            return {**info, "state": "cleared"}
+        except (OSError, ValueError, RuntimeError):
+            return {**info, "state": "unavailable"}
+
+    def _log_audio_chunk(self, record: Dict[str, Any], offset: int) -> Dict[str, Any]:
+        """Read bounded original bytes via the authenticated plugin-page bridge."""
+        info = self._log_audio_info(record)
+        if info["state"] != "available":
+            return info
+        if offset < 0 or offset >= info["bytes"]:
+            raise ValueError("音频读取位置无效")
+        try:
+            with Path(record["audio_path"]).resolve().open("rb") as handle:
+                handle.seek(offset)
+                data = handle.read(1024 * 1024)
+        except FileNotFoundError:
+            return {**info, "state": "cleared"}
+        except OSError:
+            return {**info, "state": "unavailable"}
+        if not data:
+            return {**info, "state": "unavailable"}
+        return {**info, "audio_base64": base64.b64encode(data).decode("ascii"),
+                "offset": offset, "next_offset": offset + len(data),
+                "done": offset + len(data) >= info["bytes"]}
+
+    async def _handle_log_audio(self):
+        log = self._run_log()
+        if log is None:
+            return self._err("运行日志未启用")
+        if _as_text(self._query("instance")) != log.instance_id:
+            return self._ok({"state": "expired"})
+        record = log.synth.get(_as_int(self._query("id"), 0))
+        if record is None:
+            return self._ok({"state": "expired"})
+        try:
+            offset = int(self._query("offset") or 0)
+            return self._ok(await asyncio.to_thread(self._log_audio_chunk, record, offset))
+        except (ValueError, TypeError):
+            return self._err("音频读取位置无效")
+
     async def _handle_logs(self):
         log = self._run_log()
         if log is None:
@@ -2678,6 +2718,11 @@ class GenieWebApi:
             offset = max(0, _as_int(self._query("offset"), 0))
             filters = self._log_filters(False)
             items, total = log.buffer.query(limit=limit, offset=offset, **filters)
+            items = [dict(item) for item in items]
+            for item in items:
+                extra = item.get("extra", {})
+                if extra.get("synth_id") and extra.get("instance") == log.instance_id:
+                    item["audio"] = self._log_audio_info(log.synth.get(_as_int(extra["synth_id"], 0)))
             return self._ok(
                 {
                     "items": items,
@@ -2707,6 +2752,7 @@ class GenieWebApi:
             offset = max(0, _as_int(self._query("offset"), 0))
             filters = self._log_filters(True)
             items, total = log.synth.query(limit=limit, offset=offset, **filters)
+            items = [{**item, "audio": self._log_audio_info(item)} for item in items]
             stat_limit = _clamp_int(_as_int(self._query("stats"), 60), 1, 200)
             return self._ok(
                 {
@@ -2775,4 +2821,3 @@ class GenieWebApi:
                 "Cache-Control": "no-store",
             },
         )
-

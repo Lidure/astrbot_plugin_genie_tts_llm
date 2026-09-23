@@ -17,6 +17,7 @@ from astrbot.api.provider import LLMResponse, ProviderRequest
 from . import audio_compat
 from . import emotion_pack
 from . import voice_vault
+from . import session_state
 from .emotion_pack import EmotionPackError
 from .emotion_manager import EmotionManager
 from .tts_engine import DEFAULT_MAX_TEXT_LENGTH, TTSEngine, has_pronounceable
@@ -29,7 +30,7 @@ from .voice_vault import VoiceVault, VoiceVaultError
     "astrbot_plugin_genie_tts_llm",
     "Whereis-Alice",
     "一个通过 LLM、翻译和 Genie TTS 实现语音合成的插件，支持主动语音工具",
-    "1.10.1",
+    "1.11.0",
     "https://github.com/Whereis-Alice/astrbot_plugin_genie_tts_llm",
 )
 class GenieTtsLlmPlugin(Star):
@@ -39,7 +40,7 @@ class GenieTtsLlmPlugin(Star):
     # 老安装的配置文件里已经写着 true，只改 schema 默认值救不了它们，得迁移一次。
     NOTICE_MIGRATION_KV_KEY = "failure_notice_default_off_v196"
     # 插件版本号：WebUI 总览与感情包元数据都会读它。
-    PLUGIN_VERSION = "1.10.1"
+    PLUGIN_VERSION = "1.11.0"
     # 感情包快照目录名（位于插件数据目录下）。
     PACK_DIR_NAME = "emotion_packs"
     # 能被识别为「导入模式」的 token，真正的语义交给 emotion_pack 归一化。
@@ -125,6 +126,7 @@ class GenieTtsLlmPlugin(Star):
         self.inactive_groups: Set[str] = set()
         self.session_emotions: Dict[str, Dict[str, str]] = {}
         self.session_w_settings: Dict[str, Dict[str, str]] = {}
+        self.known_sessions: Dict[str, Dict[str, Any]] = {}
         self.last_tts_trigger_at: Dict[str, float] = {}
         self.skip_next_auto_tts_sessions: Set[str] = set()
         self.pending_auto_tts_sessions: Set[str] = set()
@@ -172,13 +174,8 @@ class GenieTtsLlmPlugin(Star):
         if self.config.get("enable_space_keepalive"):
             self._keepalive_task = asyncio.create_task(self._keep_alive_loop())
 
-        # 初始化白名单群组（自动开启 TTS）
-        whitelist = self.config.get("group_whitelist", [])
-        for group_id in whitelist:
-            normalized_group_id = self._normalize_group_id(group_id)
-            if normalized_group_id:
-                self.active_groups.add(normalized_group_id)
-                logger.info(f"白名单群组 [{normalized_group_id}] 已自动开启语音合成。")
+        # 群白名单实时从配置读取，不能复制进持久化的手动开关。
+        # 否则从配置删除群号后，旧开关仍会在重启时把群重新打开。
 
         if self.config.get("enable_group_tts_by_default", False):
             logger.info("已开启全部群默认语音合成；群组黑名单仍优先。")
@@ -246,8 +243,13 @@ class GenieTtsLlmPlugin(Star):
             self.w_active_sessions.update(
                 self._as_str_set(saved.get("w_active_sessions"))
             )
-            self.active_groups.update(self._as_str_set(saved.get("active_groups")))
+            saved_groups = self._as_str_set(saved.get("active_groups"))
+            if saved.get("version", 1) == 1:
+                # 旧存储混合了配置白名单和手动开启；当前白名单交回配置管理。
+                saved_groups -= session_state.group_ids(self.config.get("group_whitelist", []))
+            self.active_groups.update(saved_groups)
             self.inactive_groups.update(self._as_str_set(saved.get("inactive_groups")))
+            self.known_sessions.update(session_state.restore_known_sessions(saved.get("known_sessions")))
             self.session_emotions.update(
                 self._as_profile_map(
                     saved.get("session_emotions"), ("character", "emotion")
@@ -259,7 +261,7 @@ class GenieTtsLlmPlugin(Star):
 
             # 同一会话不能同时是固定情感模式和自动情感识别模式，自动模式优先。
             self.active_sessions -= self.w_active_sessions
-            # 运行时手动关掉的群，优先级高于 __init__ 里的白名单自动开启。
+            # 手动关闭优先于群白名单和默认全开。
             self.active_groups -= self.inactive_groups
 
             logger.info(
@@ -314,6 +316,8 @@ class GenieTtsLlmPlugin(Star):
             return
 
         payload = {
+            "version": 2,
+            "known_sessions": session_state.restore_known_sessions(self.known_sessions),
             "active_sessions": sorted(self.active_sessions),
             "w_active_sessions": sorted(self.w_active_sessions),
             "active_groups": sorted(self.active_groups),
@@ -330,6 +334,25 @@ class GenieTtsLlmPlugin(Star):
                 await self.put_kv_data(self.STATE_KV_KEY, payload)
         except Exception as exc:
             logger.warning(f"保存 TTS 会话状态失败（不影响本次操作）: {exc}")
+
+    async def _observe_session(self, event: AstrMessageEvent, *, persist: bool = True) -> None:
+        """Record real event origins, including sessions enabled only by group config."""
+        await self._state_restored.wait()
+        sid = str(event.unified_msg_origin or "")
+        if not sid:
+            return
+        gid = self._normalize_group_id(getattr(event.message_obj, "group_id", ""))
+        now = int(time.time())
+        previous = self.known_sessions.get(sid)
+        # Persist first sightings immediately; coalesce repeated LLM/tool rounds.
+        if previous and previous["group_id"] == gid and now - previous["last_seen"] < 60:
+            return
+        self.known_sessions.pop(sid, None)
+        self.known_sessions[sid] = {"group_id": gid, "last_seen": now}
+        while len(self.known_sessions) > session_state.MAX_KNOWN_SESSIONS:
+            self.known_sessions.pop(next(iter(self.known_sessions)))
+        if persist:
+            await self._persist_state()
 
     # -------------------------------------------------------- 已发语音历史
 
@@ -418,19 +441,11 @@ class GenieTtsLlmPlugin(Star):
         group_id = self._normalize_group_id(group_id)
         if not group_id:
             return False
-        blacklist = self.config.get("group_blacklist", [])
-        return str(group_id) in [str(g) for g in blacklist]
+        return group_id in session_state.group_ids(self.config.get("group_blacklist", []))
 
     def _is_group_tts_active(self, group_id: Optional[object]) -> bool:
         """检查群组级 TTS 是否开启。黑名单 > 运行时关闭 > 默认全开/白名单/手动开启。"""
-        group_id = self._normalize_group_id(group_id)
-        if not group_id or self._is_group_blacklisted(group_id):
-            return False
-        if group_id in self.inactive_groups:
-            return False
-        return bool(self.config.get("enable_group_tts_by_default", False)) or (
-            group_id in self.active_groups
-        )
+        return session_state.group_state(self, self._normalize_group_id(group_id))["enabled"]
 
     def _should_generate_tts_now(self, session_id: str) -> bool:
         """按配置判断本次 LLM 回复是否需要生成语音。"""
@@ -2124,6 +2139,7 @@ class GenieTtsLlmPlugin(Star):
 
     @filter.command("tts-llm", alias={"开启语音合成"})
     async def start_tts(self, event: AstrMessageEvent):
+        await self._observe_session(event, persist=False)
         group_id = self._normalize_group_id(event.message_obj.group_id)
         if self._is_group_blacklisted(group_id):
             yield event.plain_result("❌ 本群组已被禁用语音合成功能。")
@@ -2142,16 +2158,20 @@ class GenieTtsLlmPlugin(Star):
 
     @filter.command("tts-q", alias={"关闭语音合成"})
     async def stop_tts(self, event: AstrMessageEvent):
+        await self._observe_session(event, persist=False)
         session_id = event.unified_msg_origin
         self.active_sessions.discard(session_id)
         self.w_active_sessions.discard(session_id)
         await self._persist_state()
-        logger.info(f"会话 [{session_id}] 的所有 LLM TTS 功能已关闭。")
-        yield event.plain_result("⏹️ 本对话的所有LLM语音合成功能已关闭。")
+        logger.info(f"会话 [{session_id}] 的单独 LLM TTS 设置已清除。")
+        group_id = self._normalize_group_id(event.message_obj.group_id)
+        suffix = "\n本群仍通过群设置自动配音；关闭群配音请用 /ttg-q。" if self._is_group_tts_active(group_id) else ""
+        yield event.plain_result("⏹️ 已清除本对话的单独配音设置。" + suffix)
 
     @filter.command("ttg", alias={"开启群语音"})
     async def start_group_tts(self, event: AstrMessageEvent):
         """开启当前群组的语音合成 (对所有人生效)"""
+        await self._observe_session(event, persist=False)
         group_id = self._normalize_group_id(event.message_obj.group_id)
         if not group_id:
             yield event.plain_result("❌ 此指令仅限群聊使用。")
@@ -2184,6 +2204,7 @@ class GenieTtsLlmPlugin(Star):
     @filter.command("ttg-q", alias={"关闭群语音"})
     async def stop_group_tts(self, event: AstrMessageEvent):
         """关闭当前群组的语音合成"""
+        await self._observe_session(event, persist=False)
         group_id = self._normalize_group_id(event.message_obj.group_id)
         if not group_id:
             yield event.plain_result("❌ 此指令仅限群聊使用。")
@@ -2195,10 +2216,11 @@ class GenieTtsLlmPlugin(Star):
         self.active_groups.discard(group_id)
         await self._persist_state()
         logger.info(f"群组 [{group_id}] 的 LLM TTS 功能已关闭。")
-        yield event.plain_result("⏹️ 本群组的LLM语音合成已关闭。")
+        yield event.plain_result("⏹️ 已关闭本群的群级自动配音。会话通过 /tts-llm 或 /tts-w 单独开启的仍有效。")
 
     @filter.command("tts-w", alias={"开启自动情感识别"})
     async def start_tts_w(self, event: AstrMessageEvent):
+        await self._observe_session(event, persist=False)
         group_id = self._normalize_group_id(event.message_obj.group_id)
         if self._is_group_blacklisted(group_id):
             yield event.plain_result("❌ 本群组已被禁用语音合成功能。")
@@ -2216,6 +2238,7 @@ class GenieTtsLlmPlugin(Star):
 
     @filter.command("tts-w-q", alias={"关闭自动情感识别"})
     async def stop_tts_w(self, event: AstrMessageEvent):
+        await self._observe_session(event, persist=False)
         session_id = event.unified_msg_origin
         self.w_active_sessions.discard(session_id)
         await self._persist_state()
@@ -2226,6 +2249,7 @@ class GenieTtsLlmPlugin(Star):
     async def switch_emotion(
         self, event: AstrMessageEvent, character_name: str, emotion_name: str
     ):
+        await self._observe_session(event, persist=False)
         if self.emotion_manager.get_emotion_data(character_name, emotion_name):
             self.session_emotions[event.unified_msg_origin] = {
                 "character": character_name,
@@ -2245,6 +2269,7 @@ class GenieTtsLlmPlugin(Star):
 
     @filter.command("sw-w", alias={"切换w角色"})
     async def switch_w_character(self, event: AstrMessageEvent, character_name: str):
+        await self._observe_session(event, persist=False)
         if self.emotion_manager.character_exists(character_name):
             self.session_w_settings[event.unified_msg_origin] = {
                 "character": character_name
@@ -2262,17 +2287,21 @@ class GenieTtsLlmPlugin(Star):
     @filter.command("tts-status", alias={"语音状态"})
     async def tts_status(self, event: AstrMessageEvent):
         """查看本会话/本群的语音开关、当前音色、队列与 TTS 服务器状态"""
+        await self._observe_session(event, persist=False)
         session_id = event.unified_msg_origin
         group_id = self._normalize_group_id(event.message_obj.group_id)
 
         if session_id in self.w_active_sessions:
-            session_state = "✅ 自动情感识别模式（/tts-w）"
+            session_label = "✅ 自动情感识别模式（/tts-w）"
         elif session_id in self.active_sessions:
-            session_state = "✅ 固定情感模式（/tts-llm）"
+            session_label = "✅ 固定情感模式（/tts-llm）"
         else:
-            session_state = "⏹️ 未开启"
+            session_label = "⏹️ 未开启"
 
-        lines = ["🎙️ Genie TTS 状态", f"• 本会话: {session_state}"]
+        effective = session_state.effective_state(self, session_id, group_id)
+        lines = ["🎙️ Genie TTS 状态", f"• 会话单独设置: {session_label}",
+                 "• 实际自动配音: " + ("✅ 已开启" if effective["enabled"] else "⏹️ 未开启"),
+                 "• 生效来源: " + " / ".join(effective["sources"])]
 
         if group_id:
             if self._is_group_blacklisted(group_id):
@@ -3520,6 +3549,7 @@ class GenieTtsLlmPlugin(Star):
     @filter.on_llm_request()
     async def inject_llm_prompt(self, event: AstrMessageEvent, req: ProviderRequest):
         """在LLM请求前注入提示词"""
+        await self._observe_session(event)
         session_id = event.unified_msg_origin
         group_id = self._normalize_group_id(event.message_obj.group_id)
 
@@ -3529,11 +3559,7 @@ class GenieTtsLlmPlugin(Star):
 
         # 只有在开启了TTS模式（自动或固定，或群组模式）时才注入
         is_group_tts_active = self._is_group_tts_active(group_id)
-        is_active = (
-            session_id in self.active_sessions
-            or session_id in self.w_active_sessions
-            or is_group_tts_active
-        )
+        is_active = session_state.effective_state(self, session_id, group_id)["enabled"]
 
         if not is_active:
             tool_prompt = self._build_llm_tool_prompt(session_id)
@@ -3626,6 +3652,7 @@ class GenieTtsLlmPlugin(Star):
     async def intercept_llm_response_for_tts(
         self, event: AstrMessageEvent, resp: LLMResponse
     ):
+        await self._observe_session(event)
         session_id = event.unified_msg_origin
         group_id = self._normalize_group_id(event.message_obj.group_id)
         original_text = resp.completion_text.strip()
@@ -3662,11 +3689,7 @@ class GenieTtsLlmPlugin(Star):
 
         # 检查是否开启了TTS (个人会话 或 群组)
         is_group_tts_active = self._is_group_tts_active(group_id)
-        is_active = (
-            session_id in self.active_sessions
-            or session_id in self.w_active_sessions
-            or is_group_tts_active
-        )
+        is_active = session_state.effective_state(self, session_id, group_id)["enabled"]
 
         if not is_active:
             return

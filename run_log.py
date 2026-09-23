@@ -30,6 +30,7 @@ import os
 import re
 import threading
 import time
+import uuid
 from collections import deque
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
@@ -540,6 +541,7 @@ class SynthLog:
         self.total = 0
         self.enabled = bool(enabled)
         self.full_text = bool(full_text)
+        self.on_finish = None
 
     @property
     def capacity(self) -> int:
@@ -625,6 +627,16 @@ class SynthLog:
             record["status_label"] = SYNTH_STATUSES.get(key, key)
             record["elapsed_ms"] = _to_int(elapsed_ms)
             self._fill_audio(record)
+            snapshot = dict(record)
+        if self.on_finish:
+            try:
+                self.on_finish(snapshot)
+            except Exception:
+                pass  # Observability must never fail the synthesis itself.
+
+    def get(self, record_id: int) -> Optional[Dict[str, Any]]:
+        with self._guard:
+            return next((dict(r) for r in self._entries if r["id"] == record_id), None)
 
     @staticmethod
     def _fill_audio(record: Dict[str, Any]) -> None:
@@ -921,8 +933,21 @@ class RunLog:
         self.enabled = bool(enabled)
         self.buffer = RunLogBuffer(capacity)
         self.synth = SynthLog(synth_capacity, full_text=full_text, enabled=self.enabled)
+        self.instance_id = uuid.uuid4().hex
+        self.synth.on_finish = self._synth_finished
         self._logger: Optional[Any] = None
         self._attached = False
+
+    def _synth_finished(self, record: Dict[str, Any]) -> None:
+        """Link a completion log to the exact synthesis, never guess by timestamp."""
+        if self._logger is None:
+            return
+        self._logger.info(
+            "Genie TTS 合成记录 #%s | %s | %s · %s | 会话 [%s]",
+            record["id"], record["status_label"], record.get("character", ""),
+            record.get("emotion", ""), record.get("session", ""),
+            extra={"genie": {"synth_id": record["id"], "instance": self.instance_id}},
+        )
 
     @property
     def attached(self) -> bool:
