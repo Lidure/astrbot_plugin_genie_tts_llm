@@ -97,6 +97,47 @@ AUTO_SENTENCE_PAUSE_MS = 260
 AUTO_ELLIPSIS_PAUSE_MS = 420
 AUTO_PAUSE_BOUNDARY_PATTERN = re.compile(r"…+|\.{2,}|[。．！？.!?]+|[\r\n]+")
 
+# 自动自然停顿：句子末尾和逗号后的轻停顿，只在后面还有可读文字时插入。
+# 只插入标记，不改动语音的音高/时间尺度；由支持 [pause=ms] 的 Genie Space 实施。
+NATURAL_PAUSE_BOUNDARY_PATTERN = re.compile(
+    r"""[。！？!?…]+[」』】）》”’"']*|[、，,]+"""
+)
+MAX_NATURAL_PAUSE_MS = 1200
+
+
+def inject_natural_pauses(text: str, sentence_ms: int = 500, clause_ms: int = 160) -> str:
+    """在句中标点后插入可配置停顿；不叠加已有的 [pause=ms] 标记。
+
+    - 句末不追加暂停（尾音留白由 _append_tail_padding 处理）
+    - 不在重复标点、闭合引号、显式停顿标记旁边重复插入
+    - 只处理有下一个可读片段的边界，不处理英文小数点
+    """
+    if not text:
+        return text
+    try:
+        sentence_ms = max(0, min(int(sentence_ms), MAX_NATURAL_PAUSE_MS))
+        clause_ms = max(0, min(int(clause_ms), MAX_NATURAL_PAUSE_MS))
+    except (TypeError, ValueError, OverflowError):
+        return text
+    result = []
+    cursor = 0
+    for found in NATURAL_PAUSE_BOUNDARY_PATTERN.finditer(text):
+        result.append(text[cursor:found.end()])
+        cursor = found.end()
+        remaining = text[cursor:].lstrip()
+        if not remaining or remaining.lower().startswith("[pause"):
+            continue
+        if not has_pronounceable(remaining):
+            continue
+        punctuation = found.group(0)
+        is_clause = punctuation[0] in "、，,"
+        duration = clause_ms if is_clause else sentence_ms
+        if duration:
+            result.append(f"[pause={duration}]")
+    result.append(text[cursor:])
+    return "".join(result)
+
+
 
 def strip_pause_markers(text: str) -> str:
     """剥掉 [pause=ms] 标记本身，只留下真正会被念出来的文本。
@@ -1054,6 +1095,16 @@ class TTSEngine:
                     f"[{session_id_for_log}] 已为TTS文本补充句末标点，降低尾音截断概率。"
                 )
                 text_for_tts = punctuated_text
+
+            if self.config.get("enable_natural_pauses", False):
+                paused_text = inject_natural_pauses(
+                    text_for_tts,
+                    self.config.get("natural_pause_sentence_ms", 500),
+                    self.config.get("natural_pause_clause_ms", 160),
+                )
+                if paused_text != text_for_tts:
+                    text_for_tts = paused_text
+                    logger.debug(f"[{session_id_for_log}] 已自动插入自然停顿。")
 
             # 纯标点 / 纯表情文本会让 Genie 输出整条参考音频，这里直接不合成。
             if not has_pronounceable(text_for_tts):

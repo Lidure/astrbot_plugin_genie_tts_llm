@@ -28,3 +28,9 @@
 - 此改版沿用上游最新版的 `provider_translation`、翻译、情感与 WebUI 工作台。与魔搭创空间适配无关的模型下载和角色配置仍由 Genie 服务端维护。
 
 原上游：<https://github.com/Whereis-Alice/astrbot_plugin_genie_tts_llm>。
+
+## 4. 平静语气与自然停顿（v1.11.2 起）
+
+需要更自然的聊天节奏时，可在插件配置中将默认感情设为已经注册的 `平静`，并开启 `enable_natural_pauses`。推荐先使用：`natural_pause_sentence_ms=550`、`natural_pause_clause_ms=160`。句间和逗号短停顿不会修改音频音高、语速，也不需提示 LLM 手动插标签。可以按试听结果在插件配置中随时调整或关闭。
+
+此功能要求 ModelScope 创空间的 Genie `/tts` 能识别 `[pause=毫秒]`，服务端不能把标记当普通文字念出来；其它不支持该协议的 TTS 后端请保持关闭。已经手动插入的 `[pause=毫秒]` 会被保留（需开启原有的 `enable_custom_pause_marker`），不会再叠加自动停顿。单句且没有内部停顿标点时保持原样。

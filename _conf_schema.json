@@ -237,6 +237,27 @@
     "type": "bool",
     "default": false
   },
+  "enable_natural_pauses": {
+    "title": "自动自然停顿",
+    "description": "在句中标点后添加自然停顿",
+    "hint": "不需要 LLM 插入 [pause] 标记。对句号/问号/叹号、省略号插入完整停顿，对逗号/顿号插入较短停顿；不会在末尾追加，也不会重复已有的 [pause=ms]。需要 Genie 服务支持 [pause] 标记。",
+    "type": "bool",
+    "default": false
+  },
+  "natural_pause_sentence_ms": {
+    "title": "句间自然停顿（毫秒）",
+    "description": "推荐 400～650 毫秒",
+    "hint": "仅在自动自然停顿开启时生效，范围 0～1200，设置为 0 表示禁用句间自动停顿。",
+    "type": "int",
+    "default": 500
+  },
+  "natural_pause_clause_ms": {
+    "title": "逗号与顿号停顿（毫秒）",
+    "description": "推荐 120～220 毫秒",
+    "hint": "仅在自动自然停顿开启时生效，范围 0～1200，设置为 0 表示禁用逗号停顿。",
+    "type": "int",
+    "default": 160
+  },
   "custom_pause_prompt": {
     "title": "停顿标记提示词",
     "description": "注入说明",

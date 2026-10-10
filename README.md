@@ -138,3 +138,8 @@ _✨ AstrBot LLM 回复语音合成插件 ✨_
 
 - 本插件的语音合成功能由 [**Genie TTS**](https://github.com/High-Logic/Genie) 库提供核心支持，由衷感谢原作者的杰出工作。
 - 本 fork 基于 [clown145/astrbot_plugin_tts_llm](https://github.com/clown145/astrbot_plugin_tts_llm) 调整。
+
+
+### 平静语气 + 自然停顿（Lidure 版 v1.11.2）
+
+默认情感可选已注册的「平静」；勾选 **自动自然停顿**，句号等使用 `natural_pause_sentence_ms`，逗号等使用 `natural_pause_clause_ms`。推荐 550 / 160 ms。该功能不对 WAV 做降速处理，而是向支持 `[pause=ms]` 的 Genie 创空间发送标记；可随时关闭。参考 [ModelScope 部署说明](docs/deploy.md)。

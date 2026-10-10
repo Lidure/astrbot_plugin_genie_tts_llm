@@ -35,7 +35,7 @@ from .voice_vault import VoiceVault, VoiceVaultError
     "astrbot_plugin_genie_tts_llm",
     "Whereis-Alice",
     "一个通过 LLM、翻译和 Genie TTS 实现语音合成的插件，支持主动语音工具",
-    "1.11.1",
+    "1.11.2",
     "https://github.com/Lidure/astrbot_plugin_genie_tts_llm",
 )
 class GenieTtsLlmPlugin(Star):
@@ -45,7 +45,7 @@ class GenieTtsLlmPlugin(Star):
     # 老安装的配置文件里已经写着 true，只改 schema 默认值救不了它们，得迁移一次。
     NOTICE_MIGRATION_KV_KEY = "failure_notice_default_off_v196"
     # 插件版本号：WebUI 总览与感情包元数据都会读它。
-    PLUGIN_VERSION = "1.11.1"
+    PLUGIN_VERSION = "1.11.2"
     # 感情包快照目录名（位于插件数据目录下）。
     PACK_DIR_NAME = "emotion_packs"
     # 能被识别为「导入模式」的 token，真正的语义交给 emotion_pack 归一化。

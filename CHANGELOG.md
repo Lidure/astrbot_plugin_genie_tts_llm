@@ -3,6 +3,12 @@
 > 每个版本都在仓库里打了 tag（`v1.0.0` 起全部回溯补齐），并建了对应的 [Release](https://github.com/Whereis-Alice/astrbot_plugin_genie_tts_llm/releases)。
 > `v1.3.2` 与 `v1.5.0` 例外，没有独立的 tag / release：这两版的改动当年没有单独提交，直接折进了下一次版本号 bump（`v1.3.3` / `v1.5.1`）的 commit 里，仓库里找不到对应的提交点。翻 Releases 看到跳号不用怀疑，改动都在下一版里。
 
+## v1.11.2 (自然停顿与平静语音支持)
+
+- 新增可选的自动自然停顿：`enable_natural_pauses`、`natural_pause_sentence_ms` 和 `natural_pause_clause_ms`。无需 LLM 生成标签，可直接处理语音合成文本。
+- 只对文本内部的句号/问号/感叹号/省略号、逗号/顿号增加可调停顿；保留现有手动 `[pause=ms]` 标记并避免重复插入，不额外延长句尾。
+- 语速和音高不做时间拉伸；建议搭配平静情感使用。新功能默认关闭，升级不会改变其他用户已有配音效果。
+
 ## v1.11.1 (Lidure · ModelScope 适配版)
 
 - **以 Whereis-Alice 上游 v1.11.0 为基线**，保留新 WebUI 工作台、语音收藏、运行日志与 provider_translation 功能。
