@@ -105,24 +105,24 @@ class EmotionRoutingTests(unittest.TestCase):
         self.assertIn("enable_provider_emotion_autofill", source)
         self.assertIn("Provider自动补判情感", source)
 
-    def test_main_prioritizes_manual_then_llm_then_provider_autofill(self):
+    def test_main_prioritizes_explicit_emotions_before_provider_autofill(self):
         source = Path("main.py").read_text(encoding="utf-8")
-        priority_block = '''        if session_setting:\n            target_emotion = session_setting["emotion"]\n            emotion_source = "会话固定情感"\n        elif enable_llm_emotion and injected_emotion:\n            target_emotion = injected_emotion\n            emotion_source = "LLM情感标签"\n        elif not provider_emotion_autofill:\n            target_emotion = self._get_default_emotion_for_character(char_name)\n'''
-        self.assertIn(priority_block, source)
-        self.assertIn("if provider_emotion_autofill and not target_emotion:", source)
-        self.assertIn('else "Provider自动补判情感"', source)
+        self.assertIn("has_manual_emotion=bool(emotion_name)", source)
+        self.assertIn("has_injected_emotion=bool(tagged_emotion)", source)
+        self.assertIn("has_injected_emotion=bool(enable_llm_emotion and injected_emotion)", source)
+        self.assertIn("self.session_emotions.get(session_id)", source)
+        self.assertIn("should_provider_autofill_emotion(", source)
 
-    def test_llm_tool_preserves_explicit_emotion_before_provider_autofill(self):
+    def test_llm_tool_provider_autofill_updates_reference_emotion(self):
         source = Path("main.py").read_text(encoding="utf-8")
-        self.assertIn("has_manual_tool_emotion = bool(emotion_name)", source)
-        self.assertIn("has_manual_emotion=has_manual_tool_emotion", source)
-        self.assertIn("LLM工具 Provider自动补判情感", source)
+        self.assertIn("target_text, guessed_emotion = await self._translate_text_and_pick_emotion_with_backends(", source)
+        self.assertIn("resolved_emotion, emotion_data = guessed_emotion, guessed_data", source)
 
-    def test_main_uses_shared_session_role_resolution_in_emotion_paths(self):
+    def test_role_resolver_used_by_llm_tool_and_speech(self):
         source = Path("main.py").read_text(encoding="utf-8")
-        self.assertIn("from .emotion_routing import", source)
-        self.assertGreaterEqual(source.count("self._resolve_tts_profile(session_id)"), 3)
-        self.assertIn("parse_provider_emotion_result(", source)
+        self.assertIn("self._resolve_tts_profile(", source)
+        self.assertIn("self.session_character_bindings.get(session_id)", source)
+        self.assertIn("self._get_default_emotion_for_character", source)
 
 
 if __name__ == "__main__":

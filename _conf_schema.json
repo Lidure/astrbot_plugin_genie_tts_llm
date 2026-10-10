@@ -2,21 +2,14 @@
   "enable_group_tts_by_default": {
     "title": "默认开启全部群语音",
     "description": "所有群默认开启",
-    "hint": "开启后无需配置群组白名单或执行 /ttg。群组黑名单仍优先；/ttg-q 可临时关闭当前群，插件重启后恢复默认。",
+    "hint": "开启后无需配置群组白名单或执行 /ttg。群组黑名单仍优先；/ttg-q 关闭群级配音，开启状态持久化时重启保留。",
     "type": "bool",
     "default": false
   },
-  "enable_private_tts_by_default": {
-    "title": "默认开启全部私聊语音",
-    "description": "所有私聊默认开启",
-    "hint": "开启后无需在每个私聊执行 /tts-llm；/tts-q 可临时关闭当前私聊，插件重启后恢复默认。",
-    "type": "bool",
-    "default": true
-  },
   "group_whitelist": {
     "title": "群组白名单",
-    "description": "启动时自动开启",
-    "hint": "当“默认开启全部群语音”关闭时生效。填写群号，例如：123456789。",
+    "description": "保存后实时生效",
+    "hint": "指定群自动配音，无需 /ttg。保存后实时生效；单独关闭与黑名单优先。填写群号，例如：123456789。",
     "type": "list",
     "items": {
       "type": "string"
@@ -36,14 +29,21 @@
   "tts_servers": {
     "title": "TTS 服务器列表",
     "description": "Genie TTS 根地址",
-    "hint": "填写 Space 或本地服务根地址，不要带 /tts。支持多个地址，插件会按顺序尝试。",
+    "hint": "填写 ModelScope 创空间根地址（如 https://your-space.ms.show）或专属推理网关根地址，不要带 /tts；支持多个地址。",
     "type": "list",
     "items": {
       "type": "string"
     },
     "default": [
-      "https://your-hf-space.hf.space"
+      "https://your-space.ms.show"
     ]
+  },
+  "modelscope_api_token": {
+    "title": "魔搭 ModelScope API Token（专属推理）",
+    "description": "仅在使用魔搭专属推理网关时需要",
+    "hint": "仅发送到 api-inference.modelscope.net 或其子域，不会发送到公开创空间 *.ms.show 或其他第三方地址；也可通过 MODELSCOPE_API_TOKEN 环境变量设置。",
+    "type": "string",
+    "default": ""
   },
   "default_character": {
     "title": "默认角色名称",
@@ -58,16 +58,6 @@
     "hint": "固定情感模式下使用。必须已通过 /注册感情 注册，或已导入 emotions.json。",
     "type": "string",
     "default": "开心"
-  },
-  "character_default_emotions": {
-    "title": "角色默认感情",
-    "description": "按角色设置兜底感情",
-    "hint": "每行填写 角色=感情，例如 airi=平静、oka=平静、kisaki=开心。角色专属默认优先；未配置时尝试上方全局默认，再回落到该角色第一个已注册感情。",
-    "type": "list",
-    "items": {
-      "type": "string"
-    },
-    "default": []
   },
   "tts_default_language": {
     "title": "TTS 默认语言",
@@ -226,12 +216,19 @@
     "type": "string",
     "default": "([。、，！？,.!?])"
   },
+  "chunk_gap_ms": {
+    "title": "分段间停顿",
+    "description": "拼接补静音",
+    "hint": "开启句子切分后，一条消息会被拆成多次请求再拼接，而 Space 会丢掉每次请求末尾的句间停顿，导致分段边界处完全没有停顿、整条语音像一口气念完。这里按上一段的结尾标点补回：句末标点/省略号补满，逗号顿号补一半，切在句中不补。0 表示不补；建议与 Space 的 GENIE_SENTENCE_PAUSE_MS 保持一致（默认 260），上限 2000。",
+    "type": "int",
+    "default": 260
+  },
   "tts_max_text_length": {
     "title": "语音文本长度上限",
     "description": "过长截断",
-    "hint": "只对送入 TTS 的音频文本生效：超过该字符数会优先在句子边界截断，避免超长回复被切成大量分块导致长时间排队。0 表示不限制；audio_and_text 模式下展示给用户的文字仍是完整原文，不受影响。建议 120-200。",
+    "hint": "只对送入 TTS 的音频文本生效：超过该字符数的部分会被直接丢掉、不会被朗读，截断点优先选句末标点（句号问号叹号省略号），没有合适的句末标点才退让到逗号顿号。0 表示不限制。设得太小会让长回复的后半段完全没声音，听起来就是「话没说完突然结束」；设得太大则一条消息会被切成很多块、排队变久。建议 200-400，audio_and_text 模式下展示给用户的文字始终是完整原文，不受影响。",
     "type": "int",
-    "default": 150
+    "default": 300
   },
   "enable_custom_pause_marker": {
     "title": "自定义停顿标记",
@@ -275,13 +272,6 @@
         "title": "LLM 情感识别",
         "description": "生成情感标签",
         "hint": "开启后会注入提示词，要求 LLM 在回复末尾添加 [emotion=xxx] 标签。两种“外语TTS准备方式”下都生效：provider_translation 链路会先剥离标签再送去翻译。前提是角色已用 /注册感情 注册过情感，且下方 Prompt 保留 {emotions} 占位符，否则会回落默认情感。",
-        "type": "bool",
-        "default": false
-      },
-      "enable_provider_emotion_autofill": {
-        "title": "Provider 自动补判情感",
-        "description": "翻译时顺便判断情感",
-        "hint": "仅在“外语TTS准备方式=provider_translation”时生效。开启后，如果本轮没有通过 /sw 等方式固定情感，也没有有效的 [emotion=xxx] 标签，翻译 Provider 会从当前角色已注册情感中自动补选一个；判定失败时仍回落角色默认情感，不会覆盖显式情感。原有 /tts-w 自动情感模式不依赖此开关。",
         "type": "bool",
         "default": false
       },
@@ -343,6 +333,13 @@
         "hint": "仅在“外语TTS准备方式=provider_translation”时生效。注意默认值写死了翻译成 Japanese，若“TTS目标语言”不是日语请手动改掉；留空则插件会按目标语言自动生成中文提示词。",
         "type": "text",
         "default": "Translate the following text to Japanese. Output only the translation, nothing else."
+      },
+      "enable_provider_emotion_autofill": {
+        "title": "Provider 翻译时自动补判情感（可选）",
+        "description": "仅 provider_translation 生效；优先采用手动指定和 LLM 情感标签",
+        "hint": "默认关闭，开启后在没有明确情感时，由翻译 Provider 同时推断情感；不会改变主 LLM 注入、原有 /tts-w 模式。",
+        "type": "bool",
+        "default": false
       }
     }
   },
@@ -400,12 +397,136 @@
       }
     }
   },
-  "modelscope_api_token": {
-    "title": "ModelScope API Token",
-    "description": "ModelScope dedicated inference authentication",
-    "hint": "Only used for *.api-inference.modelscope.net. You may also set the MODELSCOPE_API_TOKEN environment variable.",
+  "enable_tts_leak_guard": {
+    "title": "参考音频泄漏防护",
+    "description": "异常长音频重试",
+    "hint": "开启后，若合成结果的时长明显超过文本预期（Genie 在极端情况下会把参考音频拼进结果，表现为“上一次的语音 + 这次的语音”叠成一条），插件会丢弃该结果并自动重试一次，最终保留较短的那份。建议保持开启。",
+    "type": "bool",
+    "default": true
+  },
+  "tts_leak_guard_seconds_per_char": {
+    "title": "泄漏防护每字秒数",
+    "description": "预期时长系数",
+    "hint": "泄漏防护用来估算音频的预期上限时长：预期秒数 = 可发音字符数 × 本值 + 停顿标记总时长。值越小越严格、越容易触发重试。低于 0.2 会被自动修正为 0.2。语速偏慢的角色可以适当调大。",
+    "type": "float",
+    "default": 0.9
+  },
+  "tts_leak_guard_min_seconds": {
+    "title": "泄漏防护最小基线",
+    "description": "短文本兜底秒数",
+    "hint": "预期时长的下限，避免极短文本（例如一两个字）因为固有的起止静音被误判成泄漏。低于 1.0 会被自动修正为 1.0。",
+    "type": "float",
+    "default": 3.0
+  },
+  "enable_tts_truncation_guard": {
+    "title": "语音截断防护",
+    "description": "异常短音频重试",
+    "hint": "泄漏防护的反向兜底。Genie 的采样没有固定随机种子，偶尔会在第一步就判定“说完了”，服务端会把那个句段静默丢掉——落在句子中间就吞掉一个分句，落在结尾就是“话没说完突然结束”。开启后插件会检查成品时长，明显短于文本应有长度时自动重合成一次并保留较长的那份。建议保持开启。",
+    "type": "bool",
+    "default": true
+  },
+  "tts_truncation_guard_seconds_per_char": {
+    "title": "截断防护每字秒数",
+    "description": "预期下限系数",
+    "hint": "截断防护的预期下限：预期秒数 = 可发音字符数 × 本值（停顿不计入）。日语实测最快约 0.148 秒/字，默认 0.10 留了三成余量，只抓“明显缺字”。调大更灵敏但可能误判语速快的短句而多花一次合成时间，设为 0 等于关闭。可发音字符少于 4 个的文本一律放行。",
+    "type": "float",
+    "default": 0.1
+  },
+  "tts_tail_padding_ms": {
+    "title": "语音尾部补静音",
+    "description": "结尾静音毫秒数",
+    "hint": "在成品语音末尾补一段静音。服务端会刻意丢掉每条语音结尾的句间停顿，最后一个音几乎贴着文件结尾，QQ 的 silk 转码和播放器收尾都可能吃掉尾帧，听起来像最后一个字没说完。180ms 基本听不出来又足够保险，设为 0 关闭，上限 2000。",
+    "type": "int",
+    "default": 180
+  },
+  "enable_state_persistence": {
+    "title": "开关状态持久化",
+    "description": "重启不丢设置",
+    "hint": "开启后，会话/群聊的语音开关、自动情感模式以及各会话选择的角色与感情会写入插件 KV 存储，AstrBot 重启后自动恢复。关闭则回到旧行为：所有运行时开关在重启后重置为默认值。",
+    "type": "bool",
+    "default": true
+  },
+  "enable_tts_failure_notice": {
+    "title": "失败提示追加到回复",
+    "description": "默认关，失败去日志页看",
+    "hint": "默认关闭：语音合成或发送失败时不往聊天里加任何东西，只写日志，失败详情去 WebUI 工作台的「日志」页查（合成记录 + 运行日志都有）。开启后会在文本回复末尾追加一行形如 (TTS失败: 原因) 的提示——排查时方便，但会把内部管道暴露进对话内容。",
+    "type": "bool",
+    "default": false
+  },
+  "enable_run_log": {
+    "title": "运行日志采集",
+    "description": "WebUI 日志模块",
+    "hint": "开启后插件会在内存里保留自己的运行日志与每次合成的完整轨迹（LLM 原文、选中的情感与来源、耗时、失败原因），供 WebUI「日志」页排查“哪些情感不好”。只存在内存里，不写盘，重载插件即清空。关闭后日志页为空，也不再占用内存。改完需要重载插件生效。",
+    "type": "bool",
+    "default": true
+  },
+  "run_log_capacity": {
+    "title": "运行日志条数",
+    "description": "环形缓冲上限",
+    "hint": "内存里最多保留多少条插件运行日志，超出后丢弃最旧的。范围 50~5000，默认 500。改完需要重载插件生效。",
+    "type": "int",
+    "default": 500
+  },
+  "run_log_synth_capacity": {
+    "title": "合成记录条数",
+    "description": "合成轨迹上限",
+    "hint": "内存里最多保留多少条合成记录（每条含情感、来源、耗时、文本）。情感统计只统计还留在缓冲里的记录，想看更长的趋势就调大。范围 20~2000，默认 200。改完需要重载插件生效。",
+    "type": "int",
+    "default": 200
+  },
+  "run_log_full_text": {
+    "title": "记录完整文本",
+    "description": "存全文还是摘要",
+    "hint": "开启时合成记录保存 LLM 原文与送进 TTS 的完整文本（单条上限 4000 字），方便逐字核对。关闭后只保留前 160 字摘要，省内存。改完需要重载插件生效。",
+    "type": "bool",
+    "default": true
+  },
+  "enable_voice_favorites": {
+    "title": "语音收藏",
+    "description": "引用语音即可收藏",
+    "hint": "开启后可以引用我发过的语音，用 /语音收藏 把原始 WAV 字节级拷进收藏夹长期保存（临时音频 30 分钟后会被清理，收藏不会）。同时开放 /收藏列表、/发收藏、/收藏文件、/收藏导出、/收藏导入 等指令与 WebUI 工作台的「语音收藏」页。关闭后这些指令只回一句提示，已存的收藏不会被删。",
+    "type": "bool",
+    "default": true
+  },
+  "voice_favorite_limit": {
+    "title": "收藏条数上限",
+    "description": "超出淘汰最旧的",
+    "hint": "收藏夹最多保留多少条语音，超出后自动淘汰最旧的一条（置顶的永不淘汰）。淘汰会连音频文件一起删掉。范围 1~5000，默认 200。",
+    "type": "int",
+    "default": 200
+  },
+  "voice_favorite_max_mb": {
+    "title": "单条收藏大小上限",
+    "description": "单位 MB",
+    "hint": "单条语音允许收藏的最大体积（MB）。超过就拒绝收藏，避免有人把大文件塞进来撑爆磁盘。一条 10 秒的 24kHz 单声道 WAV 约 0.5MB，默认 32MB 足够宽松。最小 1。",
+    "type": "int",
+    "default": 32
+  },
+  "voice_file_upload_mode": {
+    "title": "语音转文件通道",
+    "description": "auto / component / onebot_action",
+    "hint": "/语音转文件、/收藏文件、/收藏导出 把音频当文件外发时走哪条通道。auto（默认）先试 AstrBot 的文件消息段，失败再退回 OneBot 的 upload_group_file / upload_private_file；component 只用消息段（跨机需要配 callback_api_base）；onebot_action 只用 OneBot 上传接口（要求 AstrBot 与协议端能访问同一个文件路径）。NapCat / LLOneBot / SnowLuma 都支持后者。",
     "type": "string",
-    "default": "",
-    "obvious_hint": false
+    "default": "auto",
+    "options": [
+      "auto",
+      "component",
+      "onebot_action"
+    ]
+  },
+  "enable_private_tts_by_default": {
+    "title": "私聊默认开启语音",
+    "description": "私聊自动合成；可用 /tts-q 手动关闭",
+    "type": "bool",
+    "default": true
+  },
+  "character_default_emotions": {
+    "title": "各角色默认情感",
+    "description": "每行填写 角色=情感，例如 kisaki=normal",
+    "type": "list",
+    "items": {
+      "type": "string"
+    },
+    "default": []
   }
 }

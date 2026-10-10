@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="moonlit" data-density="comfortable">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Genie TTS · 语音合成工作台</title>
+<link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+
+<div class="aura-layer" aria-hidden="true"><i class="aura aura-1"></i><i class="aura aura-2"></i><i class="aura aura-3"></i><i class="aura-veil"></i></div>
+
+<div class="shell">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-badge">
+        <svg class="brand-mark" viewBox="0 0 48 48" role="img" aria-label="Genie TTS">
+          <defs>
+            <linearGradient id="gtl-mark" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="var(--accent)"></stop>
+              <stop offset="1" stop-color="var(--accent-2)"></stop>
+            </linearGradient>
+          </defs>
+          <rect x="1.5" y="1.5" width="45" height="45" rx="14" fill="url(#gtl-mark)"></rect>
+          <path d="M24 12.5a4.6 4.6 0 0 1 4.6 4.6v6.2a4.6 4.6 0 0 1-9.2 0v-6.2A4.6 4.6 0 0 1 24 12.5z" fill="#fff" opacity=".96"></path>
+          <path d="M16.6 23.4a7.4 7.4 0 0 0 14.8 0" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round" opacity=".96"></path>
+          <path d="M24 30.9V34.6" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round"></path>
+          <path d="M19.9 34.6h8.2" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round"></path>
+          <path d="M35.4 14.2l.95 2.75 2.75.95-2.75.95-.95 2.75-.95-2.75-2.75-.95 2.75-.95z" fill="#fff" opacity=".92"></path>
+          <path d="M11.4 27.6l.66 1.9 1.9.66-1.9.66-.66 1.9-.66-1.9-1.9-.66 1.9-.66z" fill="#fff" opacity=".72"></path>
+        </svg>
+      </span>
+      <span class="brand-copy">
+        <strong class="brand-name">Genie TTS</strong>
+        <span class="brand-sub">语音合成工作台 · 感情库 · 分段停顿 · 语音收藏</span>
+      </span>
+    </div>
+    <div class="topbar-tools">
+      <label class="tool tool-select" title="切换配色主题">
+        <span class="tool-ico tool-swatch" aria-hidden="true"><i></i><i></i></span>
+        <select id="theme-select" aria-label="切换配色主题"></select>
+        <span class="tool-caret" aria-hidden="true">⌄</span>
+      </label>
+      <button class="tool" id="density-toggle" type="button" title="切换排版密度"><span class="tool-ico" aria-hidden="true">⇕</span><span id="density-label">宽松</span></button>
+      <button class="tool" id="refresh-btn" type="button" title="重新拉取当前分区的数据"><span class="tool-ico" aria-hidden="true">⟳</span><span>刷新</span></button>
+      <button class="tool tool-danger" id="reset-btn" type="button" title="清空本页的试听历史与草稿"><span class="tool-ico" aria-hidden="true">⌫</span><span>清空本页</span></button>
+    </div>
+  </header>
+
+  <nav class="tabbar" id="tabbar" role="tablist" aria-label="工作台分区"></nav>
+
+  <main class="views" id="views">
+    <section class="view" id="view-studio" data-view="studio" role="tabpanel" aria-labelledby="tab-studio" hidden></section>
+    <section class="view" id="view-emotions" data-view="emotions" role="tabpanel" aria-labelledby="tab-emotions" hidden></section>
+    <section class="view" id="view-packs" data-view="packs" role="tabpanel" aria-labelledby="tab-packs" hidden></section>
+    <section class="view" id="view-favorites" data-view="favorites" role="tabpanel" aria-labelledby="tab-favorites" hidden></section>
+    <section class="view" id="view-config" data-view="config" role="tabpanel" aria-labelledby="tab-config" hidden></section>
+    <section class="view" id="view-servers" data-view="servers" role="tabpanel" aria-labelledby="tab-servers" hidden></section>
+    <section class="view" id="view-sessions" data-view="sessions" role="tabpanel" aria-labelledby="tab-sessions" hidden></section>
+    <section class="view" id="view-commands" data-view="commands" role="tabpanel" aria-labelledby="tab-commands" hidden></section>
+    <section class="view" id="view-logs" data-view="logs" role="tabpanel" aria-labelledby="tab-logs" hidden></section>
+    <section class="view" id="view-about" data-view="about" role="tabpanel" aria-labelledby="tab-about" hidden></section>
+  </main>
+
+  <footer class="statusbar">
+    <span class="status-left" id="status-left">正在连接 AstrBot…</span>
+    <span class="status-right" id="status-right"></span>
+    <span class="status-stripe" aria-hidden="true"><i></i><i></i><i></i></span>
+  </footer>
+</div>
+
+<div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+
+<div class="modal" id="modal" hidden>
+  <div class="modal-mask" id="modal-mask"></div>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <p class="kicker" id="modal-kicker">CONFIRM</p>
+    <h2 class="modal-title" id="modal-title"></h2>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" id="modal-cancel">取消</button>
+      <button type="button" class="btn btn-primary" id="modal-ok">确定</button>
+    </div>
+  </div>
+</div>
+
+<div class="boot" id="boot"><span class="boot-spin" aria-hidden="true"></span><span class="boot-text">正在连接 AstrBot Dashboard…</span></div>
+
+<script src="/api/plugin/page/bridge-sdk.js"></script>
+<script src="./app.js"></script>
+</body>
+</html>

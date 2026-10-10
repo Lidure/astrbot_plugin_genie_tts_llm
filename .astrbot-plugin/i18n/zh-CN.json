@@ -1,0 +1,12 @@
+{
+  "metadata": {
+    "display_name": "Genie TTS LLM",
+    "description": "Genie TTS 语音合成插件：多角色感情音色、LLM 情绪自适应、分段停顿控制，附带语音合成工作台 WebUI。"
+  },
+  "pages": {
+    "studio": {
+      "title": "语音合成工作台",
+      "desc": "选音色、写台词、试算分段、直接试听；同时管理感情库、感情包导入导出、插件配置、服务器与会话。"
+    }
+  }
+}

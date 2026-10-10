@@ -1,0 +1,12 @@
+{
+  "metadata": {
+    "display_name": "Genie TTS LLM",
+    "description": "Genie TTS speech plugin: multi-character emotion voices, LLM-driven emotion selection, chunked pause control, plus a synthesis studio WebUI."
+  },
+  "pages": {
+    "studio": {
+      "title": "Voice Studio",
+      "desc": "Pick a voice, write a line, inspect chunking and audition it. Also manages the emotion library, emotion packs, plugin config, servers and sessions."
+    }
+  }
+}

@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+temp_audio/
+data/
+emotion_packs/
+*.wav
+.idea/
+.vscode/
+.DS_Store
