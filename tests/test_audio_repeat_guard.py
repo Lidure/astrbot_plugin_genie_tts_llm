@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+import re
 import asyncio
 import hashlib
 import json
@@ -93,6 +94,7 @@ def engine_method(name):
     import logging
     namespace = {
         "logger": logging.getLogger("genie-tts-guard-test"), "time": time,
+        "PAUSE_MARKER_PATTERN": re.compile(r"\[pause\s*=\s*(\d+)\s*(?:ms)?\]", re.I),
         "hashlib": hashlib, "_modelscope_auth_headers": lambda *_: {},
         "classify_audio_repeat": guard.classify_audio_repeat,
         "wave": wave, "uuid": uuid, "SAMPLE_RATE": 32000,

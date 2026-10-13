@@ -9,6 +9,7 @@ import uuid
 import wave
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Optional
 
 import pytest
 
@@ -23,6 +24,7 @@ def isolate(method):
     node = next(n for n in engine.body if isinstance(n, ast.AsyncFunctionDef) and n.name == method)
     ns = {
         "asyncio": asyncio, "re": re, "time": time, "uuid": uuid, "wave": wave,
+        "Optional": Optional,
         "PAUSE_MARKER_PATTERN": PAUSE_PATTERN,
         "logger": logging.getLogger("test-pause-compat"),
         "DEFAULT_MAX_TEXT_LENGTH": 300,
