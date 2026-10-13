@@ -4,12 +4,19 @@ import re
 import uuid
 import wave
 import time
+import hashlib
+from collections import deque
 from pathlib import Path
 from typing import Optional, Dict
 from urllib.parse import urlparse
 
 import httpx
 from astrbot.api import logger, AstrBotConfig
+
+try:
+    from .audio_repeat_guard import classify_audio_repeat
+except ImportError:
+    from audio_repeat_guard import classify_audio_repeat
 
 # --- 音频参数 (必须与Genie TTS服务输出匹配) ---
 BYTES_PER_SAMPLE = 2
@@ -246,7 +253,11 @@ class TTSEngine:
             "truncation_guard_hits": 0,
             "text_truncated": 0,
             "empty_result_retries": 0,
+            "audio_repeat_guard_hits": 0,
         }
+
+        # Only bounded RAM fingerprints, no persisted or uploaded voice content.
+        self._recent_audio_signatures = deque(maxlen=6)
 
         # 启动清理任务
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
@@ -734,7 +745,7 @@ class TTSEngine:
         tts_payload = {
             "character_name": character_name,
             "text": text,
-            "split_sentence": True,
+            "split_sentence": self.config.get("tts_server_split_sentence", False) is True,
         }
         output_path = self.temp_audio_dir / f"{uuid.uuid4()}.wav"
         tts_start = time.perf_counter()
@@ -795,19 +806,17 @@ class TTSEngine:
         session_id_for_log: str,
         language: str = None,
     ) -> Optional[str]:
-        """使用单个指定的TTS服务器尝试合成语音，并返回保存好的文件路径。"""
+        """Try this server twice if audio is abnormal; never send known-bad loops."""
         logger.info(f"[{session_id_for_log}] 尝试TTS服务器: {server_url}")
-
-        # 获取此服务器的锁，确保 set_reference_audio 和 /tts 不会被其他请求打断
         server_lock = self._get_server_lock(server_url)
-
         best_path: Optional[str] = None
+        best_signature = None
+        best_penalty: Optional[tuple[int, float]] = None
+        best_seconds = 0.0
         async with server_lock:
             try:
-                # Propagate the language parameter directly, fallback to config only if None provided
                 if not language:
                     language = self.config.get("tts_default_language", "jp")
-
                 ref_payload = {
                     "character_name": character_name,
                     "audio_path": ref_audio_path,
@@ -817,9 +826,10 @@ class TTSEngine:
                 tts_timeout = self.config.get("tts_timeout_seconds", 120)
                 ref_start = time.perf_counter()
                 response = await self.http_client.post(
-                    f"{server_url}/set_reference_audio", json=ref_payload,
+                    f"{server_url}/set_reference_audio",
+                    json=ref_payload,
                     headers=_modelscope_auth_headers(server_url, self.config),
-                    timeout=60
+                    timeout=60,
                 )
                 response.raise_for_status()
                 logger.info(
@@ -833,11 +843,19 @@ class TTSEngine:
                 minimum_seconds = (
                     self._minimum_audio_seconds(text) if truncation_guard else 0.0
                 )
-                best_penalty: Optional[tuple[int, float]] = None
-                best_seconds = 0.0
+                repeat_guard = (
+                    self.config.get("enable_tts_audio_repeat_guard", True) is True
+                )
+                text_digest = hashlib.sha256(text.encode("utf-8")).digest()
+                recent = getattr(self, "_recent_audio_signatures", ())
+                prior_signatures = [
+                    signature
+                    for saved_character, saved_digest, signature in recent
+                    if saved_character == character_name and saved_digest != text_digest
+                ] if repeat_guard else []
 
-                # 最多合成两次：第一次结果时长量级异常（偏长＝疑似参考音频泄漏，
-                # 偏短＝疑似句段被漏掉）时重试一次，保留更接近合理区间的那一次。
+                # Only two synthesis attempts per server. A rejected recording
+                # is deleted rather than being clipped (which loses real speech).
                 for attempt in range(2):
                     audio_path, audio_seconds = await self._stream_tts_to_file(
                         server_url,
@@ -847,27 +865,29 @@ class TTSEngine:
                         session_id_for_log,
                     )
                     if not audio_path:
-                        if best_penalty is not None and best_penalty[0] == 2:
-                            # 首次结果已被判定为疑似泄漏，重试又没拿回音频：
-                            # 宁可这次合成失败，也不要把叠加音频发给用户。
-                            logger.warning(
-                                f"[{session_id_for_log}] 重试未返回音频，"
-                                f"已丢弃疑似参考音频泄漏的首次结果。"
-                            )
-                            self._discard_temp_file(best_path)
-                            return None
-                        if best_path is None and attempt == 0:
-                            # 一个字都没拿回来：后端整段合成失败。T2S 采样在第一步
-                            # 就吐结束符是随机事件，同一句话再抽一次几乎总能拿到，
-                            # 而这里直接返回 None 就是「这条语音发不出去」。
+                        if attempt == 0 and best_path is None:
                             self.stats["empty_result_retries"] += 1
                             logger.warning(
-                                f"[{session_id_for_log}] 合成未返回任何音频"
-                                f"（后端整段失败），重试一次。"
+                                f"[{session_id_for_log}] 合成未返回音频，重试一次。"
                             )
                             continue
-                        # 偏短的首次结果留着：缺几个字也好过整条语音发不出去。
-                        return best_path
+                        break
+
+                    signature = None
+                    if repeat_guard:
+                        repeat_kind, signature = classify_audio_repeat(
+                            audio_path, prior_signatures
+                        )
+                        if repeat_kind:
+                            self.stats["audio_repeat_guard_hits"] += 1
+                            logger.warning(
+                                f"[{session_id_for_log}] 音频重复防护检测到"
+                                f"{'同条语音循环' if repeat_kind == 'internal' else '跨请求固定台词重复'}；"
+                                + ("已丢弃并重试一次。" if attempt == 0
+                                   else "重试后仍重复，拒绝发送。")
+                            )
+                            self._discard_temp_file(audio_path)
+                            continue
 
                     penalty = self._duration_penalty(
                         audio_seconds, minimum_seconds, expected_seconds
@@ -875,46 +895,59 @@ class TTSEngine:
                     if best_penalty is None or penalty < best_penalty:
                         self._discard_temp_file(best_path)
                         best_path = audio_path
-                        best_penalty, best_seconds = penalty, audio_seconds
+                        best_penalty = penalty
+                        best_signature = signature
+                        best_seconds = audio_seconds
                     else:
                         self._discard_temp_file(audio_path)
 
                     if best_penalty[0] == 0:
+                        if best_signature is not None:
+                            self._recent_audio_signatures.append(
+                                (character_name, text_digest, best_signature)
+                            )
                         return best_path
 
-                    retrying = attempt == 0
-                    if best_penalty[0] == 2:
-                        if retrying:
-                            # 同一次合成只计一次，避免重试把统计翻倍
+                    if penalty[0] == 2:
+                        if attempt == 0:
                             self.stats["leak_guard_hits"] += 1
                         logger.warning(
                             f"[{session_id_for_log}] 合成结果异常偏长"
-                            f"（{audio_seconds:.2f}s > 预期上限 {expected_seconds:.2f}s），"
-                            f"疑似参考音频被拼入结果。"
-                            + (
-                                "正在重试一次。"
-                                if retrying
-                                else f"两次结果均偏长，采用较短的一次（{best_seconds:.2f}s）。"
-                            )
+                            f"（{audio_seconds:.2f}s > 上限 {expected_seconds:.2f}s）；"
+                            + ("正在重试一次。" if attempt == 0
+                               else "两次均异常，拒绝发送较长的结果。")
                         )
                     else:
-                        if retrying:
+                        if attempt == 0:
                             self.stats["truncation_guard_hits"] += 1
                         logger.warning(
                             f"[{session_id_for_log}] 合成结果异常偏短"
-                            f"（{audio_seconds:.2f}s < 预期下限 {minimum_seconds:.2f}s），"
-                            f"疑似句段被漏掉或尾音被截断。"
-                            + (
-                                "正在重试一次。"
-                                if retrying
-                                else f"两次结果均偏短，采用较长的一次（{best_seconds:.2f}s）。"
-                            )
+                            f"（{audio_seconds:.2f}s < 下限 {minimum_seconds:.2f}s）；"
+                            + ("正在重试一次。" if attempt == 0
+                               else "采用较接近完整长度的一份。")
                         )
 
+                if best_path is None:
+                    return None
+                if best_penalty is not None and best_penalty[0] == 2:
+                    # Old behavior sent the shorter of two overlong takes,
+                    # even though both could contain reference-audio leakage.
+                    logger.warning(
+                        f"[{session_id_for_log}] 最短一次仍异常偏长"
+                        f"（{best_seconds:.2f}s），已丢弃而非发送重复语音。"
+                    )
+                    self._discard_temp_file(best_path)
+                    return None
+
+                if best_signature is not None:
+                    self._recent_audio_signatures.append(
+                        (character_name, text_digest, best_signature)
+                    )
                 return best_path
-            except Exception as e:
+
+            except Exception as exc:
                 logger.warning(
-                    f"[{session_id_for_log}] TTS服务器 {server_url} 交互失败: {e}"
+                    f"[{session_id_for_log}] TTS服务器 {server_url} 交互失败: {exc}"
                 )
                 self._discard_temp_file(best_path)
                 return None

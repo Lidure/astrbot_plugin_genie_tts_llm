@@ -106,3 +106,11 @@
 ---
 
 [← 文档索引](README.md) · [项目主页](../README.md)
+
+
+### 1.11.3 音频重复防护
+
+- `tts_server_split_sentence`（默认 `false`）：控制发送给 Genie `/tts` 的 `split_sentence` 字段，独立于本地 `enable_sentence_splitting`。后端分句可能造成循环时建议关闭。
+- `enable_tts_audio_repeat_guard`（默认 `true`）：有 NumPy 时使用波形近似匹配找单条语音的循环和不同文本之间相同的音频片段，重试仍异常会跳过该次发送。关闭后仍保留时长防护；没有 NumPy 时此检查自动跳过。不等同于语音识别，不能覆盖重读但波形明显不同的情况。
+- `enable_tts_leak_guard`（默认 `true`）：连续两次超过时长上限时不再发送较短的一份，而是返回失败，避免已知异常音频进入 QQ。
+

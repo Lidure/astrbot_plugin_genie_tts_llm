@@ -97,3 +97,12 @@
 ---
 
 [← 文档索引](README.md) · [项目主页](../README.md)
+
+
+### 发语音时反复出现固定台词或某句话在同一条音频里循环
+
+1. 升级到 1.11.3，保持 `tts_server_split_sentence=false`（不要与客户端 `enable_sentence_splitting` 混淆）。
+2. 保持 `enable_tts_audio_repeat_guard=true` 和 `enable_tts_leak_guard=true`；日志搜索“音频重复防护”或“最短一次仍异常偏长”。防护会重合成一次，二次仍明显异常则不发送，而不是暴力裁剪音频。
+3. 如果不同文本仍总是出现同一固定台词，检查当前情感的 `ref_audio_text` 是否与参考音频真实台词一致，以及 Genie 服务端的参考音频状态；此类生成模型重念未必会产生足够相似的波形让客户端识别。
+4. 可先用 `/合成` 对短句进行试验，再对比 WebUI 合成日志中的最终 `tts_text` 与实际声音。如果合成文本没有重复但录音出现重复，问题更可能在 Genie TTS 服务器端，需排查模型解码/分句。
+

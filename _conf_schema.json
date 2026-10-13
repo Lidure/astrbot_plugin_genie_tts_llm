@@ -202,6 +202,13 @@
     "type": "bool",
     "default": false
   },
+  "tts_server_split_sentence": {
+    "title": "Genie 服务端再次分句",
+    "description": "控制 /tts 的 split_sentence 参数",
+    "hint": "与上面的客户端句子切分是两个独立开关。旧版总是向 Genie 发送 split_sentence=true，即使客户端没有切分。为减轻句段重复生成，建议关闭；若你的 Genie 服务要求在服务端自动分句，可以按需开启。",
+    "type": "bool",
+    "default": false
+  },
   "sentences_per_chunk": {
     "title": "每段句子数",
     "description": "分段大小",
@@ -418,10 +425,17 @@
       }
     }
   },
+  "enable_tts_audio_repeat_guard": {
+    "title": "音频内容重复防护（实验性）",
+    "description": "检测相同音频片段并重试",
+    "hint": "用可选 NumPy 进行本地 WAV 波形比较：检测同条语音的高相似循环，以及不同文本回复却多次出现的固定声音片段。命中时丢弃结果并重试一次，二次仍命中则不发送。不裁剪语音、不调用识别服务；只抓声学上几乎相同的片段，不保证识别所有重念。未安装 NumPy 时自动跳过该项，但时长防护仍工作。",
+    "type": "bool",
+    "default": true
+  },
   "enable_tts_leak_guard": {
     "title": "参考音频泄漏防护",
     "description": "异常长音频重试",
-    "hint": "开启后，若合成结果的时长明显超过文本预期（Genie 在极端情况下会把参考音频拼进结果，表现为“上一次的语音 + 这次的语音”叠成一条），插件会丢弃该结果并自动重试一次，最终保留较短的那份。建议保持开启。",
+    "hint": "开启后，若合成结果的时长明显超过文本预期（Genie 在极端情况下会把参考音频拼进结果，表现为“上一次的语音 + 这次的语音”叠成一条），插件会丢弃该结果并自动重试一次；如果两次仍明显偏长就拒绝发送（不会再发送较短但仍异常的一份）。建议保持开启。",
     "type": "bool",
     "default": true
   },
