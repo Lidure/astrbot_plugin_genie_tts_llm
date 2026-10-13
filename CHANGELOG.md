@@ -1,3 +1,10 @@
+## 1.11.4 — 修复旧配置的停顿标记误朗读
+
+- 修复当自动自然停顿已开启、但 Genie 创空间不支持 `[pause=550]` 时，插件依然把英文 `pause` 原样提交给 TTS、可能被朗读为近似“BAUS”的声音。
+- 新增 `tts_server_pause_markers_supported`（默认关闭）；只有明确确认后端支持该标记时，自动停顿/自定义停顿才能把标记送给服务端。
+- `/tts` 最终请求再做一次保护，确保没有支持标记的创空间收到 literal `[pause=...]`。保持既有音色、翻译、情感、音频去重机制和文件不变。
+- 注意网页默认勾选服务端句子切分，需与 `tts_server_split_sentence` 对齐才能比较效果；Genie 采样本身仍有随机性。
+
 ## 1.11.3 — Genie 语音重复防护
 
 - 修复「关闭客户端分句却仍始终强制 Genie 服务端 `split_sentence=true`」：新增独立的 `tts_server_split_sentence` 配置，默认关闭，减少后端分句状态反复。

@@ -15,6 +15,7 @@ jobs:
       - run: >-
           python -m pytest -q
           tests/test_audio_repeat_guard.py
+          tests/test_pause_marker_compat.py
           tests/test_modelscope_inference.py
           tests/test_natural_pauses.py
           tests/test_session_character_bindings.py

@@ -52,5 +52,5 @@ def test_config_opt_in_and_engine_used_for_all_synthesis_paths():
     assert cfg["enable_natural_pauses"]["default"] is False
     assert cfg["natural_pause_sentence_ms"]["default"] == 500
     engine = (ROOT / "tts_engine.py").read_text(encoding="utf-8")
-    assert 'if self.config.get("enable_natural_pauses", False):' in engine
+    assert 'self.config.get("enable_natural_pauses", False) and self.config.get("tts_server_pause_markers_supported", False) is True' in engine
     assert "paused_text = inject_natural_pauses(" in engine

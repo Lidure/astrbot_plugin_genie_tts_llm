@@ -742,6 +742,8 @@ class TTSEngine:
         /tts 返回 0 字节时（服务端判定整段文本无可发音内容）返回 (None, 0.0)，
         绝不能把 0 帧的空 WAV 当成合成成功，否则用户会收到一条空语音。
         """
+        if self.config.get("tts_server_pause_markers_supported", False) is not True:
+            text = " ".join(PAUSE_MARKER_PATTERN.sub(" ", text).split())
         tts_payload = {
             "character_name": character_name,
             "text": text,
@@ -1080,7 +1082,7 @@ class TTSEngine:
 
             # 自定义停顿标记 [pause=ms]：开启则保留，交由 Space 精确插入静音；
             # 关闭则在送入 TTS 前剥除，避免把标记本身朗读出来。
-            if not self.config.get("enable_custom_pause_marker", False):
+            if (not self.config.get("enable_custom_pause_marker", False) or self.config.get("tts_server_pause_markers_supported", False) is not True):
                 stripped_pause = PAUSE_MARKER_PATTERN.sub(" ", text_for_tts)
                 stripped_pause = re.sub(r"\s+", " ", stripped_pause).strip()
                 if stripped_pause != text_for_tts:
@@ -1129,7 +1131,7 @@ class TTSEngine:
                 )
                 text_for_tts = punctuated_text
 
-            if self.config.get("enable_natural_pauses", False):
+            if (self.config.get("enable_natural_pauses", False) and self.config.get("tts_server_pause_markers_supported", False) is True):
                 paused_text = inject_natural_pauses(
                     text_for_tts,
                     self.config.get("natural_pause_sentence_ms", 500),

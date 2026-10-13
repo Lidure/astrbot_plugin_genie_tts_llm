@@ -240,14 +240,21 @@
   "enable_custom_pause_marker": {
     "title": "自定义停顿标记",
     "description": "[pause=毫秒]",
-    "hint": "开启后可在朗读文本中插入形如 [pause=600] 的标记来精确控制停顿（单位毫秒），Space 端会在该处插入静音、标记本身不会被读出；关闭时这些标记会被自动清除，不影响正常文本。单个停顿上限由 Space 的 GENIE_MAX_PAUSE_MS 决定（默认 3000）。",
+    "hint": "开启后可在朗读文本中插入形如 [pause=600] 的标记来精确控制停顿（单位毫秒），只有当同时启用“创空间支持 [pause] 标记”且服务端确有解析器时才会插入静音；否则会移除标记防止被读出来；关闭时这些标记会被自动清除，不影响正常文本。单个停顿上限由 Space 的 GENIE_MAX_PAUSE_MS 决定（默认 3000）。",
+    "type": "bool",
+    "default": false
+  },
+  "tts_server_pause_markers_supported": {
+    "title": "创空间支持 [pause] 标记（兼容开关）",
+    "description": "仅确认服务端有对应解析器时开启",
+    "hint": "默认关闭：某些 Genie 服务器不认识 [pause=550]，会把英文 pause 读成声音（可能听成 BAUS）。关闭时即使旧配置已开启自动自然停顿，也不会把停顿标记送给模型；若 Space 自行实现了 [pause] 解析器，才开启本项。",
     "type": "bool",
     "default": false
   },
   "enable_natural_pauses": {
     "title": "自动自然停顿",
     "description": "在句中标点后添加自然停顿",
-    "hint": "不需要 LLM 插入 [pause] 标记。对句号/问号/叹号、省略号插入完整停顿，对逗号/顿号插入较短停顿；不会在末尾追加，也不会重复已有的 [pause=ms]。需要 Genie 服务支持 [pause] 标记。",
+    "hint": "不需要 LLM 插入 [pause] 标记。对句号/问号/叹号、省略号插入完整停顿，对逗号/顿号插入较短停顿；不会在末尾追加，也不会重复已有的 [pause=ms]。仅当同时开启“创空间支持 [pause] 标记”时才会实际插入，未验证服务器能力时不会朗读 pause。",
     "type": "bool",
     "default": false
   },
